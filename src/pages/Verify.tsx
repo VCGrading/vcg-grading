@@ -10,10 +10,42 @@ export default function Verify() {
   const [query, setQuery] = useState(params.certId ?? '')
   const [result, setResult] = useState<Certificate | null>(null)
 
+  // charge un certificat quand l'ID dans l'URL change
   useEffect(() => {
-    if (!params.certId) { setResult(null); return }
-    const r = mockCertificates.find(c => c.id === params.certId || c.serial === params.certId)
-    setResult(r ?? null)
+    if (!params.certId) {
+      setResult(null)
+      setQuery('') // reset l'input si on arrive sans id
+      return
+    }
+
+    const id = params.certId
+    const ctrl = new AbortController()
+    let cancelled = false
+
+    ;(async () => {
+      try {
+        const r = await fetch(`/api/verify/${encodeURIComponent(id)}`, { signal: ctrl.signal })
+
+        if (r.ok) {
+          const data: Certificate = await r.json()
+          if (!cancelled) setResult(data)
+          return
+        }
+
+        // 404 ou autre statut -> on tente un fallback local (utile en dev)
+        const mock = mockCertificates.find(c => c.id === id || c.serial === id) || null
+        if (!cancelled) setResult(mock)
+      } catch {
+        // erreur réseau/abort -> fallback mock
+        const mock = mockCertificates.find(c => c.id === id || c.serial === id) || null
+        if (!cancelled) setResult(mock)
+      }
+    })()
+
+    return () => {
+      cancelled = true
+      ctrl.abort()
+    }
   }, [params.certId])
 
   const submit = (e: React.FormEvent) => {
@@ -25,8 +57,12 @@ export default function Verify() {
   const shareOrCopy = async () => {
     const url = window.location.href
     try {
-      if (navigator.share) await navigator.share({ title: result ? `${result.id} — ${result.card.name}` : 'VCG Grading', url })
-      else { await navigator.clipboard.writeText(url); alert(t('verify.copied')) }
+      if (navigator.share) {
+        await navigator.share({ title: result ? `${result.id} — ${result.card.name}` : 'VCG Grading', url })
+      } else {
+        await navigator.clipboard.writeText(url)
+        alert(t('verify.copied'))
+      }
     } catch {}
   }
 

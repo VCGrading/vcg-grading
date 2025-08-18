@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
 import { tierForSpend } from '../data/badges'
 import { mockUser } from '../data/mock'
 import { useI18n } from '../i18n'
@@ -31,12 +30,14 @@ const COUPONS: Record<string, number> = { WELCOME10: 10, VCG5: 5 }
 
 export default function OrderNew() {
   const { t } = useI18n()
-  const navigate = useNavigate()
 
   const [plan, setPlan] = useState<Plan>('Standard')
   const [cards, setCards] = useState<CardInput[]>([{ ...EMPTY_CARD }])
   const [couponInput, setCouponInput] = useState('')
   const [appliedCoupon, setAppliedCoupon] = useState<string | null>(null)
+  const [email, setEmail] = useState<string>(mockUser.email ?? '')
+  const [isLoading, setIsLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   // Charger brouillon
   useEffect(() => {
@@ -47,25 +48,29 @@ export default function OrderNew() {
       if (d?.plan) setPlan(d.plan)
       if (Array.isArray(d?.cards) && d.cards.length) setCards(d.cards)
       if (d?.appliedCoupon) setAppliedCoupon(d.appliedCoupon)
+      if (d?.email) setEmail(d.email)
     } catch {}
   }, [])
 
   // Sauver brouillon
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ plan, cards, appliedCoupon }))
-  }, [plan, cards, appliedCoupon])
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ plan, cards, appliedCoupon, email }))
+  }, [plan, cards, appliedCoupon, email])
 
   const resetDraft = () => {
     setPlan('Standard')
     setCards([{ ...EMPTY_CARD }])
     setAppliedCoupon(null)
     setCouponInput('')
+    setEmail(mockUser.email ?? '')
+    setError(null)
     localStorage.removeItem(STORAGE_KEY)
   }
 
   const tier = tierForSpend(mockUser.totalSpend)
-  const basePrices: Record<Plan, number> = { Standard: 11.99, Express: 29.99, Ultra: 89.99 }
 
+  // (Affichage uniquement — le total "réel" est recalculé côté API)
+  const basePrices: Record<Plan, number> = { Standard: 11.99, Express: 29.99, Ultra: 89.99 }
   const subtotal = basePrices[plan] * cards.length
   const discountTier = subtotal * (tier.discount / 100)
   const couponPct = appliedCoupon ? COUPONS[appliedCoupon] ?? 0 : 0
@@ -83,23 +88,86 @@ export default function OrderNew() {
     setAppliedCoupon(COUPONS[code] ? code : null)
   }
 
-  const goNext = () => {
-    // Étape suivante : adresse
-    navigate('/order/address')
+  /** Soumission → API /api/order/create → redirection Stripe */
+  const handlePay = async () => {
+    setError(null)
+
+    // validations rapides
+    if (!email || !email.includes('@')) {
+      setError('Merci de renseigner un email valide.')
+      return
+    }
+    if (!cards.length) {
+      setError('Ajoutez au moins une carte.')
+      return
+    }
+
+    // payload pour l’API (annonce : year/declared en nombres)
+    const payload = {
+      email,
+      plan,
+      promoCode: appliedCoupon,
+      address: null, // l’adresse sera demandée plus tard dans le tunnel
+      cards: cards.map(c => ({
+        game: c.game,
+        name: c.name,
+        set: c.set,
+        number: c.number,
+        year: c.year ? parseInt(c.year, 10) || null : null,
+        declared_value_cents: c.declared
+          ? Math.max(0, Math.round(parseFloat(String(c.declared).replace(',', '.')) * 100))
+          : null,
+        notes: c.notes || null,
+      })),
+    }
+
+    try {
+      setIsLoading(true)
+      const r = await fetch('/api/order/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      const data = await r.json()
+      if (!r.ok) throw new Error(data?.error || 'Erreur serveur')
+      if (!data?.checkoutUrl) throw new Error('URL de paiement manquante.')
+
+      // redirection vers Stripe Checkout
+      window.location.href = data.checkoutUrl as string
+    } catch (e: any) {
+      setError(e.message || 'Impossible de créer la commande.')
+    } finally {
+      setIsLoading(false)
+    }
   }
 
   return (
     <section className="container py-12 md:pb-12 pb-24">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl md:text-3xl font-bold">{t('order.title')}</h1>
+        <h1 className="text-2xl md:3xl font-bold">{t('order.title')}</h1>
         <button type="button" className="btn-outline" onClick={resetDraft}>{t('order.reset')}</button>
       </div>
 
       <div className="mt-6 grid md:grid-cols-3 gap-6">
         {/* Formulaire principal */}
-        <form className="md:col-span-2 card p-6" onSubmit={e => { e.preventDefault(); goNext() }}>
-          {/* Formule + code promo */}
+        <form
+          className="md:col-span-2 card p-6"
+          onSubmit={e => { e.preventDefault(); if (!isLoading) handlePay() }}
+        >
+          {/* Email + Formule + code promo */}
           <div className="grid sm:grid-cols-2 gap-4">
+            <div>
+              <label className="text-sm text-muted">Email</label>
+              <input
+                value={email}
+                onChange={e => setEmail(e.target.value)}
+                placeholder="you@example.com"
+                type="email"
+                className="mt-1 w-full rounded-lg border border-border bg-white dark:bg-slate-900 px-4 py-2"
+              />
+              <p className="text-xs text-muted mt-1">Reçu + statut de commande seront envoyés à cet email.</p>
+            </div>
+
             <div>
               <label className="text-sm text-muted">{t('order.plan')}</label>
               <select
@@ -116,7 +184,7 @@ export default function OrderNew() {
               </p>
             </div>
 
-            <div>
+            <div className="sm:col-span-2">
               <label className="text-sm text-muted">{t('order.coupon')}</label>
               <div className="mt-1 flex gap-2">
                 <input
@@ -249,7 +317,12 @@ export default function OrderNew() {
             </button>
           </div>
 
-          <button type="submit" className="btn-primary mt-6">{t('order.pay')}</button>
+          {/* Erreur éventuelle */}
+          {error && <div className="mt-4 text-sm text-red-600 dark:text-red-400">{error}</div>}
+
+          <button type="submit" className="btn-primary mt-6" disabled={isLoading}>
+            {isLoading ? 'Redirection…' : t('order.pay')}
+          </button>
           <p className="mt-2 text-xs text-muted">{t('order.pay.note')}</p>
         </form>
 
@@ -300,8 +373,8 @@ export default function OrderNew() {
             <div className="text-xs text-muted">{t('order.summary.total')}</div>
             <div className="text-lg font-semibold">{total.toFixed(2)}€</div>
           </div>
-          <button className="btn-primary" onClick={goNext}>
-            {t('order.pay')}
+          <button className="btn-primary" onClick={() => !isLoading && handlePay()} disabled={isLoading}>
+            {isLoading ? 'Redirection…' : t('order.pay')}
           </button>
         </div>
       </div>
