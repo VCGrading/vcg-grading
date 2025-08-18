@@ -9,4 +9,4 @@ if (!url || !anon || !service) {
 }
 
 export const supaClient = createClient(url, anon)
-export const supaService = createClient(url, service)
+export const supaService = createClient(url, service) // privilèges serveur (RLS bypass)
