@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 900" width="1200" height="900">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#EEF2FF"/>
+      <stop offset="1" stop-color="#ECFEFF"/>
+    </linearGradient>
+    <linearGradient id="accentGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#6366F1"/>
+      <stop offset="1" stop-color="#22D3EE"/>
+    </linearGradient>
+    <linearGradient id="barGrad" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#22D3EE"/>
+      <stop offset="1" stop-color="#A78BFA"/>
+    </linearGradient>
+  </defs>
+  <rect rx="40" ry="40" x="10" y="10" width="1180" height="880" fill="url(#bg)"/>
+  <g transform="translate(100,90)">
+    <rect x="0" y="0" width="1000" height="720" rx="36" ry="36" fill="white" stroke="#E5E7EB"/>
+    <rect x="0" y="0" width="1000" height="140" rx="36" ry="36" fill="url(#bg)"/>
+    <rect x="40" y="40" width="200" height="60" rx="30" fill="white" stroke="#E5E7EB"/>
+    <text x="70" y="78" font-family="Inter, system-ui, Arial" font-size="28" fill="#6366F1">VCG</text>
+    <g transform="translate(0,140)">
+      
+    <g transform="translate(140,120)">
+      <rect x="0" y="0" width="920" height="420" rx="24" fill="#F8FAFC" stroke="#E5E7EB"/>
+      <rect x="60" y="60" width="300" height="300" rx="18" fill="white" stroke="#E2E8F0"/>
+      <rect x="84" y="84" width="252" height="120" rx="12" fill="url(#bg)"/>
+      <rect x="84" y="220" width="200" height="16" rx="8" fill="#CBD5E1"/>
+      <rect x="84" y="250" width="220" height="16" rx="8" fill="#E2E8F0"/>
+      <g transform="translate(430,70)">
+        <rect x="0" y="0" width="420" height="24" rx="12" fill="#E2E8F0"/>
+        <rect x="0" y="46" width="380" height="16" rx="8" fill="#CBD5E1"/>
+        <rect x="0" y="74" width="340" height="16" rx="8" fill="#E2E8F0"/>
+        <rect x="0" y="140" width="220" height="14" rx="7" fill="url(#barGrad)"/>
+      </g>
+      <g transform="translate(820,300)">
+        <rect x="-60" y="-60" width="120" height="120" rx="12" fill="white" stroke="#E5E7EB"/>
+        <rect x="-44" y="-44" width="24" height="24" fill="#0F172A"/>
+        <rect x="-12" y="-44" width="24" height="24" fill="#0F172A" opacity="0.75"/>
+        <rect x="-44" y="-12" width="24" height="24" fill="#0F172A" opacity="0.85"/>
+        <rect x="-12" y="-12" width="24" height="24" fill="#0F172A"/>
+      </g>
+    </g>
+    
+    </g>
+  </g>
+</svg>

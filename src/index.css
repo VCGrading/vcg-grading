@@ -1,0 +1,52 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light dark;
+}
+
+.dark body {
+  background: rgb(2 6 23); /* slate-950 */
+  color: rgb(226 232 240); /* slate-200 */
+}
+
+.container {
+  @apply max-w-6xl mx-auto px-4;
+}
+
+.card {
+  @apply bg-surface dark:bg-slate-900 border border-border/60 rounded-xl shadow-card;
+}
+
+.btn {
+  @apply inline-flex items-center justify-center rounded-lg px-4 py-2 font-medium border border-transparent transition active:scale-[.98];
+}
+.btn-primary {
+  @apply btn bg-brand text-white hover:bg-brand-dark;
+}
+.btn-outline {
+  @apply btn border-border text-foreground hover:bg-slate-100 dark:hover:bg-slate-800;
+}
+
+.badge {
+  @apply inline-flex items-center gap-2 rounded-full px-3 py-1 text-sm border border-border;
+}
+
+/* Holographic soft animation */
+.foil-anim {
+  background: linear-gradient(115deg,
+    rgba(255,0,153,0.25),
+    rgba(0,153,255,0.25),
+    rgba(0,255,204,0.25),
+    rgba(255,255,0,0.25),
+    rgba(255,0,153,0.25)
+  );
+  background-size: 300% 300%;
+  animation: foilShift 8s linear infinite;
+}
+@keyframes foilShift {
+  0% { background-position: 0% 50% }
+  50% { background-position: 100% 50% }
+  100% { background-position: 0% 50% }
+}
