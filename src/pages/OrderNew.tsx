@@ -90,56 +90,62 @@ export default function OrderNew() {
 
   /** Soumission → API /api/order/create → redirection Stripe */
   const handlePay = async () => {
-    setError(null)
+  setError(null)
 
-    // validations rapides
-    if (!email || !email.includes('@')) {
-      setError('Merci de renseigner un email valide.')
-      return
-    }
-    if (!cards.length) {
-      setError('Ajoutez au moins une carte.')
-      return
-    }
-
-    // payload pour l’API (annonce : year/declared en nombres)
-    const payload = {
-      email,
-      plan,
-      promoCode: appliedCoupon,
-      address: null, // l’adresse sera demandée plus tard dans le tunnel
-      cards: cards.map(c => ({
-        game: c.game,
-        name: c.name,
-        set: c.set,
-        number: c.number,
-        year: c.year ? parseInt(c.year, 10) || null : null,
-        declared_value_cents: c.declared
-          ? Math.max(0, Math.round(parseFloat(String(c.declared).replace(',', '.')) * 100))
-          : null,
-        notes: c.notes || null,
-      })),
-    }
-
-    try {
-      setIsLoading(true)
-      const r = await fetch('/api/order/create', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      })
-      const data = await r.json()
-      if (!r.ok) throw new Error(data?.error || 'Erreur serveur')
-      if (!data?.checkoutUrl) throw new Error('URL de paiement manquante.')
-
-      // redirection vers Stripe Checkout
-      window.location.href = data.checkoutUrl as string
-    } catch (e: any) {
-      setError(e.message || 'Impossible de créer la commande.')
-    } finally {
-      setIsLoading(false)
-    }
+  if (!email || !email.includes('@')) {
+    setError('Merci de renseigner un email valide.')
+    return
   }
+  if (!cards.length) {
+    setError('Ajoutez au moins une carte.')
+    return
+  }
+
+  const payload = {
+    email,
+    plan,
+    promoCode: appliedCoupon,
+    address: null,
+    cards: cards.map(c => ({
+      game: c.game,
+      name: c.name,
+      set: c.set,
+      number: c.number,
+      year: c.year ? parseInt(c.year, 10) || null : null,
+      declared_value_cents: c.declared
+        ? Math.max(0, Math.round(parseFloat(String(c.declared).replace(',', '.')) * 100))
+        : null,
+      notes: c.notes || null,
+    })),
+  }
+
+  try {
+    setIsLoading(true)
+    const r = await fetch('/api/order/create', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+
+    // parse "safe" (évite Unexpected end of JSON / Unexpected token …)
+    const raw = await r.text()
+    let data: any = null
+    try { data = raw ? JSON.parse(raw) : null } catch { /* ignore */ }
+
+    if (!r.ok) {
+      // montre la vraie erreur retournée par la fonction si possible
+      throw new Error(data?.error || raw || `Erreur ${r.status}`)
+    }
+    if (!data?.checkoutUrl) throw new Error('URL de paiement manquante.')
+
+    window.location.href = data.checkoutUrl as string
+  } catch (e: any) {
+    setError(e?.message || 'Impossible de créer la commande.')
+  } finally {
+    setIsLoading(false)
+  }
+}
+
 
   return (
     <section className="container py-12 md:pb-12 pb-24">
