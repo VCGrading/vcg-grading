@@ -7,7 +7,7 @@ export default function QR({ text, size = 96, className = '' }: { text: string; 
   useEffect(() => {
     let mounted = true
     QRCode.toDataURL(text, { errorCorrectionLevel: 'M', margin: 1, width: size })
-      .then(url => { if (mounted) setDataUrl(url) })
+      .then((url: string) => { if (mounted) setDataUrl(url) })
       .catch(() => setDataUrl(''))
     return () => { mounted = false }
   }, [text, size])

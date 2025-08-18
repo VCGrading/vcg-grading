@@ -3,6 +3,7 @@ import { useParams, Link } from 'react-router-dom'
 import { mockCertificates, type Certificate } from '../data/mock'
 import { useI18n } from '../i18n'
 import CertificateImage from '../components/CertificateImage'
+import QRCode from 'qrcode'
 
 export default function CertificatePage() {
   const { t } = useI18n()
@@ -170,16 +171,28 @@ function info(ctx:CanvasRenderingContext2D,label:string,value:string,x:number,y:
   for (const w of words) { const t = line + w + ' '; if (ctx.measureText(t).width > maxWidth) { ctx.fillText(line, x, yy); line = w + ' '; yy += 22 } else line = t }
   if (line) ctx.fillText(line, x, yy)
 }
-async function drawQrOrPlaceholder(ctx:CanvasRenderingContext2D,x:number,y:number,size:number,text:string){
+async function drawQrOrPlaceholder(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  size: number,
+  text: string
+) {
   try {
-    const mod = await import('qrcode')
-    const dataUrl = await mod.toDataURL(text, { margin: 0, width: size })
-    await new Promise<void>((resolve) => { const img = new Image(); img.onload = () => { ctx.drawImage(img, x, y, size, size); resolve() }; img.onerror = () => resolve(); img.src = dataUrl })
+    const dataUrl: string = await QRCode.toDataURL(text, { margin: 0, width: size })
+    await new Promise<void>((resolve) => {
+      const img = new Image()
+      img.onload = () => { ctx.drawImage(img, x, y, size, size); resolve() }
+      img.onerror = () => resolve()
+      img.src = dataUrl
+    })
   } catch {
     ctx.strokeStyle = '#0f172a'; ctx.lineWidth = 2; ctx.strokeRect(x, y, size, size)
-    ctx.font = '12px monospace'; ctx.fillStyle = '#334155'; const m = ctx.measureText('QR'); ctx.fillText('QR', x + size/2 - m.width/2, y + size/2 + 4)
+    ctx.font = '12px monospace'; ctx.fillStyle = '#334155'
+    const m = ctx.measureText('QR'); ctx.fillText('QR', x + size/2 - m.width/2, y + size/2 + 4)
   }
 }
+
 async function drawCardImage(ctx:CanvasRenderingContext2D, src:string|undefined, vx:number, vy:number, vw:number, vh:number){
   // Si image absente → placeholder
   if (!src) { ctx.fillStyle = '#cbd5e1'; roundRect(ctx, vx, vy, vw, vh, 12, true, false); ctx.font = '100px sans-serif'; ctx.fillStyle = '#94a3b8'; ctx.fillText('🃏', vx + vw/2 - 50, vy + vh/2 + 30); return }
