@@ -1,21 +1,20 @@
-import { supaClient } from '../_db.js'
+import { supaService } from './_db.js'
 
 export default async function handler(req, res) {
-  const { id } = req.query
-  if (!id || Array.isArray(id)) return res.status(400).json({ error: 'Missing id' })
+  if (req.method !== 'POST') return res.status(405).end()
 
   try {
-    const { data, error } = await supaClient
-      .from('certificates')
-      .select('*')
-      .or(`id.eq.${id},serial.eq.${id}`)
-      .order('date', { ascending: false })
-      .limit(1)
-
+    const cert = {
+      id: 'CERT-VCG-0001',
+      serial: 'NG-0001',
+      grade: 9.5,
+      card: { game: 'Pokémon', name: 'Pikachu', set: 'Base Set', number: '58/102', year: 1999, imageUrl: '/cards/pikachu.jpg' },
+      subgrades: { surface: 9.5, edges: 9, centering: 9, corners: 10 },
+      qr_url: `${process.env.SITE_URL}/verify/CERT-VCG-0001`
+    }
+    const { error } = await supaService.from('certificates').upsert(cert)
     if (error) return res.status(500).json({ error: error.message })
-    const row = data?.[0] || null
-    if (!row) return res.status(404).json({ error: 'Not found' })
-    return res.status(200).json(row)
+    return res.status(200).json({ ok: true })
   } catch (e) {
     return res.status(500).json({ error: String(e?.message || e) })
   }
