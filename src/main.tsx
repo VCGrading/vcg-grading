@@ -14,7 +14,8 @@ import NotFound from './pages/NotFound'
 import { I18nProvider } from './i18n'
 import Login from './pages/Login'
 import { AuthProvider } from './auth/AuthProvider'
-import AuthCallback from './pages/AuthCallback' // <-- ajouté
+import AuthCallback from './pages/AuthCallback'
+import AdminOrders from './pages/admin/AdminOrders' // <-- ajouté
 
 const router = createBrowserRouter([
   {
@@ -23,7 +24,7 @@ const router = createBrowserRouter([
     children: [
       { index: true, element: <Landing /> },
       { path: 'login', element: <Login /> },
-      { path: 'auth/callback', element: <AuthCallback /> }, // <-- ajouté
+      { path: 'auth/callback', element: <AuthCallback /> },
       { path: 'verify', element: <Verify /> },
       { path: 'verify/:certId', element: <Verify /> },
       { path: 'cert/:certId', element: <CertificatePage /> },
@@ -31,6 +32,7 @@ const router = createBrowserRouter([
       { path: 'order/new', element: <OrderNew /> },
       { path: 'order/address', element: <OrderAddress /> },
       { path: 'orders/:orderId', element: <OrderDetails /> },
+      { path: 'admin', element: <AdminOrders /> }, // <-- ajouté
       { path: '*', element: <NotFound /> },
     ]
   }
