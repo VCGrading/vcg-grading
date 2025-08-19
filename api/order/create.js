@@ -1,22 +1,29 @@
-import type { VercelRequest, VercelResponse } from '@vercel/node'
+export default async function handler(req, res) {
+  // Toujours répondre en JSON
+  const fail = (code, msg, extra = {}) => res.status(code).json({ error: msg, ...extra })
 
-export default async function handler(req: VercelRequest, res: VercelResponse) {
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' })
-  }
+  if (req.method !== 'POST') return fail(405, 'Method not allowed')
 
   try {
-    const { email, plan, cards } = (req.body ?? {}) as any
+    // Sécurise le body (parfois req.body est string, parfois objet)
+    let body = req.body
+    if (typeof body === 'string') {
+      try { body = JSON.parse(body) } catch { /* ignore, on traitera undefined */ }
+    }
+    body = body || {}
+
+    const { email, plan, cards } = body
     if (!email || !plan || !Array.isArray(cards) || cards.length === 0) {
-      return res.status(400).json({ error: 'Bad payload' })
+      return fail(400, 'Bad payload', { debug: { email, plan, cardsType: typeof cards } })
     }
 
+    // Mock : génère un ID et renvoie une URL de redirection vers la page compte
     const orderId = `ORD-${Math.floor(1000 + Math.random() * 9000)}`
-    const checkoutUrl = `/account?order=${orderId}&mock=1` // redirige vers compte (mock)
+    const checkoutUrl = `/account?order=${orderId}&mock=1`
 
     return res.status(200).json({ checkoutUrl, orderId })
-  } catch (err: any) {
-    console.error('order/create error:', err)
-    return res.status(500).json({ error: err?.message || 'Server error' })
+  } catch (err) {
+    console.error('order/create error', err)
+    return fail(500, 'SERVER_ERROR', { message: String(err) })
   }
 }
