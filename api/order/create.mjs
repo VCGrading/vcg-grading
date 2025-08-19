@@ -2,43 +2,44 @@
 import { supaService } from '../_db.mjs'
 
 export default async function handler(req, res) {
-  const fail = (code, error, extra = {}) =>
-    res.status(code).json({ error, ...extra })
+  const fail = (code, error, extra = {}) => res.status(code).json({ error, ...extra })
 
   if (req.method !== 'POST') return fail(405, 'Method not allowed')
 
-  // ---- Sanity check ENV (sans exposer les secrets)
+  // --- Sanity checks (évite de tourner en rond si une env manque)
   const envOk = {
     SUPABASE_URL: !!process.env.SUPABASE_URL,
     SUPABASE_SERVICE_ROLE: !!process.env.SUPABASE_SERVICE_ROLE,
-    STRIPE_SECRET_KEY: !!process.env.STRIPE_SECRET_KEY, // optionnel
+    STRIPE_SECRET_KEY: !!process.env.STRIPE_SECRET_KEY, // optionnel (mock si absent)
   }
   if (!envOk.SUPABASE_URL || !envOk.SUPABASE_SERVICE_ROLE) {
     return fail(501, 'SUPABASE_NOT_CONFIGURED', { envOk })
   }
 
-  // ---- Parse body robuste
+  // --- Parse body robuste
   let body = req.body
   if (typeof body === 'string') { try { body = JSON.parse(body) } catch { body = {} } }
   body = body || {}
 
   const { email, plan, cards, promoCode, address } = body
   if (!email || !plan || !Array.isArray(cards) || cards.length === 0) {
-    return fail(400, 'Bad payload', { debug: { email, plan, cardsLen: Array.isArray(cards) ? cards.length : null } })
+    return fail(400, 'Bad payload', { debug: { hasEmail: !!email, plan, cardsLen: Array.isArray(cards) ? cards.length : null } })
   }
 
-  // ---- Pricing (centimes)
+  // --- Pricing (centimes)
   const base = { Standard: 1199, Express: 2999, Ultra: 8999 }
   if (!base[plan]) return fail(400, 'Unknown plan', { plan })
   const subtotal = base[plan] * cards.length
 
-  // ---- Crée l'ID
+  // --- ID commande
   const orderId = `ORD-${Math.floor(1000 + Math.random() * 9000)}`
   const total_cents = subtotal
 
   try {
-    // 1) Upsert user
-    const { error: userErr } = await supaService.from('users').upsert({ email })
+    // 1) Upsert user (clé unique = email)
+    const { error: userErr } = await supaService
+      .from('users')
+      .upsert({ email }, { onConflict: 'email' })
     if (userErr) return fail(500, 'DB_UPSERT_USER', { details: userErr.message })
 
     // 2) Insert order
@@ -68,12 +69,10 @@ export default async function handler(req, res) {
     const { error: itemsErr } = await supaService.from('order_items').insert(rows)
     if (itemsErr) return fail(500, 'DB_INSERT_ITEMS', { details: itemsErr.message })
 
-    // 4) Stripe (facultatif)
+    // 4) Stripe (si absent => mock, mais la commande est déjà en base)
     const site = process.env.SITE_URL || `https://${req.headers.host}`
     const secret = process.env.STRIPE_SECRET_KEY
-
     if (!secret) {
-      // Pas de Stripe -> on renvoie quand même une URL de retour pour continuer le test
       const checkoutUrl = `${site}/account?order=${orderId}&mock=1`
       return res.status(200).json({ checkoutUrl, orderId, mode: 'mock' })
     }
@@ -81,7 +80,7 @@ export default async function handler(req, res) {
     const Stripe = (await import('stripe')).default
     const stripe = new Stripe(secret, { apiVersion: '2024-06-20' })
 
-    // code promo simple (optionnel)
+    // code promo simple (facultatif)
     let discounts
     const PROMOS = { WELCOME10: 10, VCG5: 5 }
     const pct = PROMOS[String(promoCode || '').toUpperCase()]
@@ -109,7 +108,6 @@ export default async function handler(req, res) {
 
     return res.status(200).json({ checkoutUrl: session.url, orderId })
   } catch (e) {
-    // On renvoie maintenant le message précis au client
     return fail(500, 'SERVER_ERROR', { message: String(e?.message || e) })
   }
 }
