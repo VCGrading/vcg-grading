@@ -250,6 +250,12 @@ const en = {
   'landing.final.primary': 'Get started',
   'landing.final.secondary': 'Create account',
   'account.empty':'No orders.',
+'nav.login': 'Log in',          //  ← ajoute ceci
+'nav.logout': 'Log out',        //  ← (optional)
+'nav.admin': 'Admin',           //  ← (optional)
+'verify.population.title': 'Population',
+'verify.population.none': 'No population data yet.',
+
 }
 
 

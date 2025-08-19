@@ -251,6 +251,12 @@ const fr = {
   'landing.final.secondary': 'Créer un compte',
   
   'account.empty':'Aucune commande.',
+'nav.login': 'Connexion',        //  ← ajoute ceci
+'nav.logout': 'Déconnexion',     //  ← (optionnel, utile plus tard)
+'nav.admin': 'Administration',   //  ← (optionnel si tu l’affiches)
+'verify.population.title': 'Population',
+'verify.population.none': 'Aucune donnée de population pour l’instant.',
+
 }
 
 export default fr

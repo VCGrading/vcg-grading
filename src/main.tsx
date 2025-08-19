@@ -9,7 +9,6 @@ import Account from './pages/Account'
 import OrderNew from './pages/OrderNew'
 import OrderAddress from './pages/OrderAddress'
 import OrderDetails from './pages/OrderDetails'
-import CertificatePage from './pages/Certificate'
 import NotFound from './pages/NotFound'
 import { I18nProvider } from './i18n'
 import Login from './pages/Login'
@@ -27,7 +26,6 @@ const router = createBrowserRouter([
       { path: 'auth/callback', element: <AuthCallback /> },
       { path: 'verify', element: <Verify /> },
       { path: 'verify/:certId', element: <Verify /> },
-      { path: 'cert/:certId', element: <CertificatePage /> },
       { path: 'account', element: <Account /> },
       { path: 'order/new', element: <OrderNew /> },
       { path: 'order/address', element: <OrderAddress /> },
