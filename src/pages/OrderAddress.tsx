@@ -1,222 +1,293 @@
-import { useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { useI18n } from '../i18n'
+import { useEffect, useMemo, useState } from 'react'
+import { useNavigate, Link } from 'react-router-dom'
+
+const STORAGE_KEY = 'orderDraft'
 
 type Address = {
   firstName: string
   lastName: string
-  address1: string
-  address2: string
+  company?: string
+  line1: string
+  line2?: string
   postalCode: string
   city: string
   country: string
-  phone: string
-  instructions: string
-  saveDefault: boolean
+  phone?: string
+  instructions?: string
+  email: string
 }
-
-const EMPTY: Address = {
-  firstName: '',
-  lastName: '',
-  address1: '',
-  address2: '',
-  postalCode: '',
-  city: '',
-  country: 'FR',
-  phone: '',
-  instructions: '',
-  saveDefault: true
-}
-
-const STORAGE_SHIP = 'shippingAddress'
-const STORAGE_DEFAULT = 'defaultAddress'
 
 export default function OrderAddress() {
-  const { t } = useI18n()
   const navigate = useNavigate()
-  const [model, setModel] = useState<Address>({ ...EMPTY })
-  const [errors, setErrors] = useState<Record<string, string>>({})
+  const [draft, setDraft] = useState<any | null>(null)
+  const [err, setErr] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  // hydrate form from storage
+  const [addr, setAddr] = useState<Address>({
+    firstName: '',
+    lastName: '',
+    company: '',
+    line1: '',
+    line2: '',
+    postalCode: '',
+    city: '',
+    country: 'FR',
+    phone: '',
+    instructions: '',
+    email: localStorage.getItem('accountEmail') || ''
+  })
 
   useEffect(() => {
-    const raw = localStorage.getItem(STORAGE_SHIP)
-    if (raw) {
-      try { setModel({ ...EMPTY, ...JSON.parse(raw) }) } catch {}
-    }
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY)
+      if (raw) setDraft(JSON.parse(raw))
+    } catch {}
   }, [])
 
-  const useSaved = () => {
-    const raw = localStorage.getItem(STORAGE_DEFAULT)
-    if (!raw) return
-    try { setModel({ ...EMPTY, ...JSON.parse(raw) }) } catch {}
+  const hasDraft = !!draft?.plan && Array.isArray(draft?.cards) && draft.cards.length > 0
+
+  const total = useMemo(() => {
+    if (!hasDraft) return 0
+    const base: Record<string, number> = { Standard: 11.99, Express: 29.99, Ultra: 89.99 }
+    const price = base[draft.plan] ?? 0
+    const couponPct = draft.appliedCoupon ? ({ WELCOME10: 10, VCG5: 5 } as Record<string, number>)[draft.appliedCoupon] ?? 0 : 0
+    const gross = price * draft.cards.length
+    const minusCoupon = gross * (couponPct / 100)
+    return Math.max(0, gross - minusCoupon)
+  }, [draft, hasDraft])
+
+  function update<K extends keyof Address>(key: K, val: Address[K]) {
+    setAddr(a => ({ ...a, [key]: val }))
   }
 
-  const onChange = (k: keyof Address, v: string | boolean) => {
-    setModel(prev => ({ ...prev, [k]: v }))
+  function validate(): string | null {
+    if (!hasDraft) return "Votre brouillon de commande est vide. Reprenez depuis l'étape cartes."
+    if (!addr.email || !/.+@.+\..+/.test(addr.email)) return "Email invalide."
+    if (!addr.firstName) return "Prénom requis."
+    if (!addr.lastName) return "Nom requis."
+    if (!addr.line1) return "Adresse requise."
+    if (!addr.postalCode) return "Code postal requis."
+    if (!addr.city) return "Ville requise."
+    if (!addr.country) return "Pays requis."
+    return null
   }
 
-  const validate = (): boolean => {
-    const e: Record<string, string> = {}
-    if (!model.firstName.trim()) e.firstName = t('addr.err.required')
-    if (!model.lastName.trim()) e.lastName = t('addr.err.required')
-    if (!model.address1.trim()) e.address1 = t('addr.err.required')
-    if (!model.postalCode.trim()) e.postalCode = t('addr.err.required')
-    if (!model.city.trim()) e.city = t('addr.err.required')
-    if (!model.country.trim()) e.country = t('addr.err.required')
-    if (model.phone && !/^[+0-9()\-.\s]{6,}$/.test(model.phone)) e.phone = t('addr.err.phone')
-    if (model.country === 'FR' && model.postalCode && !/^\d{5}$/.test(model.postalCode)) {
-      e.postalCode = t('addr.err.postal')
+  async function submit() {
+    const v = validate()
+    if (v) { setErr(v); return }
+    setErr(null); setLoading(true)
+    try {
+      const payload = {
+        email: addr.email,
+        plan: draft.plan,
+        cards: draft.cards,
+        promoCode: draft.appliedCoupon || null,
+        address: {
+          firstName: addr.firstName,
+          lastName: addr.lastName,
+          company: addr.company || null,
+          line1: addr.line1,
+          line2: addr.line2 || null,
+          postalCode: addr.postalCode,
+          city: addr.city,
+          country: addr.country,
+          phone: addr.phone || null,
+          instructions: addr.instructions || null
+        }
+      }
+
+      const r = await fetch('/api/order/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      })
+      const raw = await r.text()
+      const data = raw ? JSON.parse(raw) : null
+      if (!r.ok) throw new Error(data?.error ? `${data.error}${data?.details ? `: ${data.details}` : ''}` : raw)
+
+      // conserve l'email pour /account
+      localStorage.setItem('accountEmail', addr.email)
+
+      // on peut vider le draft si tu veux
+      // localStorage.removeItem(STORAGE_KEY)
+
+      window.location.href = data.checkoutUrl
+    } catch (e: any) {
+      setErr(e?.message || 'SERVER_ERROR')
+    } finally {
+      setLoading(false)
     }
-    setErrors(e)
-    return Object.keys(e).length === 0
   }
 
-  const submit = (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!validate()) return
-    localStorage.setItem(STORAGE_SHIP, JSON.stringify(model))
-    if (model.saveDefault) {
-      localStorage.setItem(STORAGE_DEFAULT, JSON.stringify(model))
-    }
-    navigate('/orders/ORD-1003') // prochaine étape (mock)
+  if (!hasDraft) {
+    return (
+      <section className="container py-12">
+        <div className="card p-6">
+          <div className="text-lg font-semibold mb-1">Aucune carte dans la commande</div>
+          <p className="text-muted">Reprenez l’étape précédente pour ajouter vos cartes.</p>
+          <div className="mt-4">
+            <Link to="/order/new" className="btn-primary">← Retour aux cartes</Link>
+          </div>
+        </div>
+      </section>
+    )
   }
 
   return (
-    <section className="container py-12">
+    <section className="container py-12 md:pb-12 pb-24">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl md:text-3xl font-bold">{t('addr.title')}</h1>
-        <button className="btn-outline" onClick={() => navigate(-1)}>{t('addr.back')}</button>
+        <h1 className="text-2xl md:text-3xl font-bold">Adresse de retour</h1>
+        <Link to="/order/new" className="btn-outline">← Modifier mes cartes</Link>
       </div>
 
-      <form className="mt-6 grid md:grid-cols-3 gap-6" onSubmit={submit}>
+      <div className="mt-6 grid md:grid-cols-3 gap-6">
+        {/* Form */}
         <div className="md:col-span-2 card p-6">
           <div className="grid sm:grid-cols-2 gap-4">
             <div>
-              <label className="text-sm text-muted">{t('addr.firstName')}</label>
+              <label className="text-sm text-muted">Email</label>
               <input
-                value={model.firstName}
-                onChange={e => onChange('firstName', e.target.value)}
-                className={'mt-1 w-full rounded-lg border px-4 py-2 ' + (errors.firstName ? 'border-red-500' : 'border-border bg-white dark:bg-slate-900')}
-                placeholder="Votre prénom"
+                type="email"
+                value={addr.email}
+                onChange={e => update('email', e.target.value)}
+                placeholder="vous@exemple.com"
+                className="mt-1 w-full rounded-lg border border-border bg-white dark:bg-slate-900 px-4 py-2"
               />
-              {errors.firstName && <p className="text-xs text-red-500 mt-1">{errors.firstName}</p>}
+            </div>
+            <div />
+            <div>
+              <label className="text-sm text-muted">Prénom</label>
+              <input
+                value={addr.firstName}
+                onChange={e => update('firstName', e.target.value)}
+                placeholder="Prénom"
+                className="mt-1 w-full rounded-lg border border-border bg-white dark:bg-slate-900 px-4 py-2"
+              />
             </div>
             <div>
-              <label className="text-sm text-muted">{t('addr.lastName')}</label>
+              <label className="text-sm text-muted">Nom</label>
               <input
-                value={model.lastName}
-                onChange={e => onChange('lastName', e.target.value)}
-                className={'mt-1 w-full rounded-lg border px-4 py-2 ' + (errors.lastName ? 'border-red-500' : 'border-border bg-white dark:bg-slate-900')}
-                placeholder="Votre nom"
+                value={addr.lastName}
+                onChange={e => update('lastName', e.target.value)}
+                placeholder="Nom"
+                className="mt-1 w-full rounded-lg border border-border bg-white dark:bg-slate-900 px-4 py-2"
               />
-              {errors.lastName && <p className="text-xs text-red-500 mt-1">{errors.lastName}</p>}
+            </div>
+            <div className="sm:col-span-2">
+              <label className="text-sm text-muted">Société (optionnel)</label>
+              <input
+                value={addr.company}
+                onChange={e => update('company', e.target.value)}
+                placeholder="Nom de société"
+                className="mt-1 w-full rounded-lg border border-border bg-white dark:bg-slate-900 px-4 py-2"
+              />
             </div>
 
             <div className="sm:col-span-2">
-              <label className="text-sm text-muted">{t('addr.address1')}</label>
+              <label className="text-sm text-muted">Adresse</label>
               <input
-                value={model.address1}
-                onChange={e => onChange('address1', e.target.value)}
-                className={'mt-1 w-full rounded-lg border px-4 py-2 ' + (errors.address1 ? 'border-red-500' : 'border-border bg-white dark:bg-slate-900')}
-                placeholder="123 rue Exemple"
+                value={addr.line1}
+                onChange={e => update('line1', e.target.value)}
+                placeholder="N° et rue"
+                className="mt-1 w-full rounded-lg border border-border bg-white dark:bg-slate-900 px-4 py-2"
               />
-              {errors.address1 && <p className="text-xs text-red-500 mt-1">{errors.address1}</p>}
             </div>
-
             <div className="sm:col-span-2">
-              <label className="text-sm text-muted">{t('addr.address2')} <span className="text-xs text-muted">({t('addr.optional')})</span></label>
+              <label className="text-sm text-muted">Complément (optionnel)</label>
               <input
-                value={model.address2}
-                onChange={e => onChange('address2', e.target.value)}
-                className="mt-1 w-full rounded-lg border border-border px-4 py-2 bg-white dark:bg-slate-900"
-                placeholder="Appartement, bâtiment, etc."
+                value={addr.line2}
+                onChange={e => update('line2', e.target.value)}
+                placeholder="Bâtiment, app., etc."
+                className="mt-1 w-full rounded-lg border border-border bg-white dark:bg-slate-900 px-4 py-2"
               />
             </div>
 
             <div>
-              <label className="text-sm text-muted">{t('addr.postalCode')}</label>
+              <label className="text-sm text-muted">Code postal</label>
               <input
-                value={model.postalCode}
-                onChange={e => onChange('postalCode', e.target.value)}
-                className={'mt-1 w-full rounded-lg border px-4 py-2 ' + (errors.postalCode ? 'border-red-500' : 'border-border bg-white dark:bg-slate-900')}
-                placeholder="75001"
-                inputMode="numeric"
+                value={addr.postalCode}
+                onChange={e => update('postalCode', e.target.value)}
+                placeholder="75000"
+                className="mt-1 w-full rounded-lg border border-border bg-white dark:bg-slate-900 px-4 py-2"
               />
-              {errors.postalCode && <p className="text-xs text-red-500 mt-1">{errors.postalCode}</p>}
             </div>
             <div>
-              <label className="text-sm text-muted">{t('addr.city')}</label>
+              <label className="text-sm text-muted">Ville</label>
               <input
-                value={model.city}
-                onChange={e => onChange('city', e.target.value)}
-                className={'mt-1 w-full rounded-lg border px-4 py-2 ' + (errors.city ? 'border-red-500' : 'border-border bg-white dark:bg-slate-900')}
+                value={addr.city}
+                onChange={e => update('city', e.target.value)}
                 placeholder="Paris"
+                className="mt-1 w-full rounded-lg border border-border bg-white dark:bg-slate-900 px-4 py-2"
               />
-              {errors.city && <p className="text-xs text-red-500 mt-1">{errors.city}</p>}
-            </div>
-
-            <div>
-              <label className="text-sm text-muted">{t('addr.country')}</label>
-              <select
-                value={model.country}
-                onChange={e => onChange('country', e.target.value)}
-                className={'mt-1 w-full rounded-lg border px-4 py-2 ' + (errors.country ? 'border-red-500' : 'border-border bg-white dark:bg-slate-900')}
-              >
-                {['FR','BE','CH','DE','ES','IT','GB','US'].map(c => <option key={c} value={c}>{c}</option>)}
-              </select>
-              {errors.country && <p className="text-xs text-red-500 mt-1">{errors.country}</p>}
             </div>
             <div>
-              <label className="text-sm text-muted">{t('addr.phone')}</label>
+              <label className="text-sm text-muted">Pays</label>
               <input
-                value={model.phone}
-                onChange={e => onChange('phone', e.target.value)}
-                className={'mt-1 w-full rounded-lg border px-4 py-2 ' + (errors.phone ? 'border-red-500' : 'border-border bg-white dark:bg-slate-900')}
-                placeholder="+33 6 00 00 00 00"
-                inputMode="tel"
+                value={addr.country}
+                onChange={e => update('country', e.target.value)}
+                placeholder="FR"
+                className="mt-1 w-full rounded-lg border border-border bg-white dark:bg-slate-900 px-4 py-2"
               />
-              {errors.phone && <p className="text-xs text-red-500 mt-1">{errors.phone}</p>}
+            </div>
+            <div>
+              <label className="text-sm text-muted">Téléphone (optionnel)</label>
+              <input
+                value={addr.phone}
+                onChange={e => update('phone', e.target.value)}
+                placeholder="+33…"
+                className="mt-1 w-full rounded-lg border border-border bg-white dark:bg-slate-900 px-4 py-2"
+              />
             </div>
 
             <div className="sm:col-span-2">
-              <label className="text-sm text-muted">{t('addr.instructions')} <span className="text-xs text-muted">({t('addr.optional')})</span></label>
+              <label className="text-sm text-muted">Instructions (optionnel)</label>
               <textarea
-                value={model.instructions}
-                onChange={e => onChange('instructions', e.target.value)}
+                value={addr.instructions}
+                onChange={e => update('instructions', e.target.value)}
                 rows={3}
-                className="mt-1 w-full rounded-lg border border-border px-4 py-2 bg-white dark:bg-slate-900"
-                placeholder="Instructions de livraison (digicode, horaires, ...)"
+                placeholder="Infos de livraison utiles"
+                className="mt-1 w-full rounded-lg border border-border bg-white dark:bg-slate-900 px-4 py-2"
               />
             </div>
-
-            <label className="sm:col-span-2 inline-flex items-center gap-2 mt-2">
-              <input
-                type="checkbox"
-                checked={model.saveDefault}
-                onChange={e => onChange('saveDefault', e.target.checked)}
-              />
-              <span className="text-sm">{t('addr.saveDefault')}</span>
-            </label>
           </div>
+
+          {err && <div className="mt-4 text-sm text-red-600 dark:text-red-400">{err}</div>}
+
+          <button type="button" className="btn-primary mt-6" onClick={submit} disabled={loading}>
+            {loading ? 'Redirection…' : 'Passer au paiement'}
+          </button>
         </div>
 
-        <aside className="card p-6 h-max">
-          <div className="font-semibold">{t('addr.sidebar.title')}</div>
-          <p className="text-sm text-muted mt-2">{t('addr.sidebar.desc')}</p>
-
-          <div className="mt-4 flex gap-2">
-            <button type="button" className="btn-outline" onClick={useSaved}>
-              {t('addr.useSaved')}
-            </button>
-            <button type="submit" className="btn-primary">
-              {t('addr.continue')}
-            </button>
-          </div>
-
-          <div className="mt-6 text-xs text-muted">
-            {t('addr.note')}
+        {/* Récap sticky */}
+        <aside className="card p-6 h-max md:sticky md:top-24">
+          <div className="font-semibold">Récapitulatif</div>
+          <div className="mt-3 text-sm space-y-2">
+            <div className="flex justify-between"><span>Cartes</span><span>{draft?.cards?.length || 0}</span></div>
+            <div className="flex justify-between"><span>Formule</span><span>{draft?.plan}</span></div>
+            {draft?.appliedCoupon && (
+              <div className="flex justify-between text-muted">
+                <span>Code promo</span><span>{draft.appliedCoupon}</span>
+              </div>
+            )}
+            <div className="border-t border-border/70 my-2" />
+            <div className="flex justify-between font-semibold"><span>Total estimé</span><span>{total.toFixed(2)}€</span></div>
           </div>
         </aside>
-      </form>
+      </div>
+
+      {/* Bottom bar mobile */}
+      <div className="md:hidden fixed bottom-0 inset-x-0 z-40 border-t border-border/70 bg-surface/95 dark:bg-slate-950/90 backdrop-blur px-4 py-3">
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="text-xs text-muted">Total estimé</div>
+            <div className="text-lg font-semibold">{total.toFixed(2)}€</div>
+          </div>
+          <button className="btn-primary" onClick={submit} disabled={loading}>
+            {loading ? '...' : 'Payer'}
+          </button>
+        </div>
+      </div>
     </section>
   )
 }
