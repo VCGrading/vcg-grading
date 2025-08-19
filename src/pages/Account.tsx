@@ -1,14 +1,14 @@
 import { useEffect, useMemo, useState } from 'react'
-import Badge from '../components/Badge'
-import { tierForSpend } from '../data/badges'
 import { Link } from 'react-router-dom'
 import { useI18n } from '../i18n'
+import Badge from '../components/Badge'
 import TiersShowcase from '../components/TiersShowcase'
+import { tierForSpend } from '../data/badges'
 import { mockUser } from '../data/mock'
 
 type OrderRow = {
   id: string
-  status: 'créée'|'réceptionnée'|'en évaluation'|'évaluée'|'expédiée'|string
+  status: string
   items: number
   total_cents: number
   created_at: string
@@ -20,9 +20,7 @@ type OrderRow = {
 export default function Account() {
   const { t } = useI18n()
 
-  // on part du mock pour l'affichage immédiat, puis on remplace par la data live
   const [email, setEmail] = useState<string>(() => {
-    // récup depuis localStorage (OrderNew sauvegarde déjà l'email)
     try {
       const draft = JSON.parse(localStorage.getItem('orderDraft') || '{}')
       return draft?.email || localStorage.getItem('accountEmail') || mockUser.email
@@ -33,9 +31,8 @@ export default function Account() {
     id: o.id, status: o.status, items: o.items, total_cents: Math.round(o.total * 100),
     created_at: o.createdAt, tracking: o.tracking || null
   })))
-  const [loading, setLoading] = useState<boolean>(false)
+  const [loading, setLoading] = useState(false)
 
-  // total dépensé (simple: somme des totaux; tu pourras filtrer par statut si tu veux)
   const totalSpend = useMemo(
     () => Math.max(0, orders.reduce((s, o) => s + (o.total_cents || 0), 0) / 100),
     [orders]
@@ -63,19 +60,18 @@ export default function Account() {
         setOrders(list)
         localStorage.setItem('accountEmail', email)
       })
-      .catch(() => {
-        // en cas d'erreur API on garde simplement le mock (pas d'UI qui saute)
-      })
+      .catch(() => {})
       .finally(() => setLoading(false))
   }, [email])
 
   return (
     <section className="container py-12">
       <h1 className="text-2xl md:text-3xl font-bold">{t('account.title')}</h1>
-      <TiersShowcase />
+
+      {/* 👉 branché sur le cumul réel */}
+      <TiersShowcase spend={totalSpend} />
 
       <div className="mt-6 grid md:grid-cols-3 gap-6">
-        {/* Carte profil */}
         <div className="md:col-span-1 card p-6">
           <div className="font-semibold">{name}</div>
           <div className="text-sm text-muted">{email}</div>
@@ -89,7 +85,6 @@ export default function Account() {
           {loading && <div className="mt-3 text-xs text-muted">Mise à jour…</div>}
         </div>
 
-        {/* Tableau commandes — EXACTEMENT ton rendu */}
         <div className="md:col-span-2 card p-0 overflow-hidden">
           <table className="w-full text-sm">
             <thead className="text-left bg-slate-50 dark:bg-slate-900">
@@ -110,7 +105,6 @@ export default function Account() {
                   <td className="px-4 py-3">{(o.total_cents/100).toFixed(2)}€</td>
                   <td className="px-4 py-3 text-right">
                     <Link to={`/orders/${o.id}?order=${o.id}`} className="btn-outline">
-
                       {t('account.table.details')}
                     </Link>
                   </td>
