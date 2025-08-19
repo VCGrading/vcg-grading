@@ -109,7 +109,8 @@ export default function Account() {
                   <td className="px-4 py-3">{o.items}</td>
                   <td className="px-4 py-3">{(o.total_cents/100).toFixed(2)}€</td>
                   <td className="px-4 py-3 text-right">
-                    <Link to={`/orders/${o.id}`} className="btn-outline">
+                    <Link to={`/orders/${o.id}?order=${o.id}`} className="btn-outline">
+
                       {t('account.table.details')}
                     </Link>
                   </td>

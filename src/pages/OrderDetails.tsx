@@ -32,10 +32,16 @@ const STEPS: { key: Order['status']; label: string }[] = [
 ]
 
 export default function OrderDetails() {
-  const { id: idFromParams } = useParams<{ id: string }>()
-  const { search } = useLocation()
+  // 🔧 ICI: on lit bien "orderId", pas "id"
+  const { orderId: idFromParams } = useParams<{ orderId: string }>()
+  const { search, pathname } = useLocation()
   const idFromQuery = new URLSearchParams(search).get('order') || undefined
-  const orderId = (idFromParams || idFromQuery || '').trim()
+
+  // petit fallback si jamais quelqu’un tape /orders/ORD-1234 sans param défini
+  const pathTail = pathname.split('/').filter(Boolean).pop()
+  const idFromPath = (pathTail && /^ORD-\d+/.test(pathTail)) ? pathTail : undefined
+
+  const currentId = (idFromParams || idFromQuery || idFromPath || '').trim()
 
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -44,17 +50,15 @@ export default function OrderDetails() {
 
   useEffect(() => {
     let alive = true
-
     async function run() {
-      if (!orderId) { // pas d’ID → pas de fetch, on affiche l’erreur
+      if (!currentId) {
         setError('Identifiant de commande manquant.')
         setLoading(false)
         return
       }
-      setLoading(true)
-      setError(null)
+      setLoading(true); setError(null)
       try {
-        const r = await fetch(`/api/order?id=${encodeURIComponent(orderId)}`)
+        const r = await fetch(`/api/order?id=${encodeURIComponent(currentId)}`)
         const raw = await r.text()
         const data = raw ? JSON.parse(raw) : null
         if (!r.ok) throw new Error(data?.error || raw || `HTTP ${r.status}`)
@@ -68,10 +72,9 @@ export default function OrderDetails() {
         if (alive) setLoading(false)
       }
     }
-
     run()
     return () => { alive = false }
-  }, [orderId])
+  }, [currentId])
 
   const stepIndex = useMemo(() => {
     const idx = STEPS.findIndex(s => s.key === order?.status)
@@ -107,7 +110,6 @@ export default function OrderDetails() {
         <Link to="/account" className="btn-outline">← Retour</Link>
       </div>
 
-      {/* Bandeau statut */}
       <div className="card p-6">
         <div className="grid md:grid-cols-5 gap-4">
           {STEPS.map((s, i) => {
@@ -122,22 +124,10 @@ export default function OrderDetails() {
         </div>
 
         <div className="mt-6 grid md:grid-cols-4 gap-4 text-sm">
-          <div>
-            <div className="text-muted">Articles</div>
-            <div>{order.items}</div>
-          </div>
-          <div>
-            <div className="text-muted">Total</div>
-            <div>{(order.total_cents / 100).toFixed(2)}€</div>
-          </div>
-          <div>
-            <div className="text-muted">Plan</div>
-            <div>{order.plan}</div>
-          </div>
-          <div>
-            <div className="text-muted">Créée le</div>
-            <div>{new Date(order.created_at).toLocaleDateString()}</div>
-          </div>
+          <div><div className="text-muted">Articles</div><div>{order.items}</div></div>
+          <div><div className="text-muted">Total</div><div>{(order.total_cents / 100).toFixed(2)}€</div></div>
+          <div><div className="text-muted">Plan</div><div>{order.plan}</div></div>
+          <div><div className="text-muted">Créée le</div><div>{new Date(order.created_at).toLocaleDateString()}</div></div>
           {order.tracking && (
             <div className="md:col-span-4">
               <div className="text-muted">Tracking</div>
@@ -147,7 +137,6 @@ export default function OrderDetails() {
         </div>
       </div>
 
-      {/* Items */}
       <div className="mt-6 card p-6">
         <div className="text-lg font-semibold mb-3">Détails des cartes</div>
         {items.length === 0 ? (

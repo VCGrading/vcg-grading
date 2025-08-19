@@ -26,6 +26,7 @@ const router = createBrowserRouter([
       { path: 'order/new', element: <OrderNew /> },
       { path: 'order/address', element: <OrderAddress /> },
       { path: 'orders/:orderId', element: <OrderDetails /> },
+      { path: 'orders', element: <OrderDetails /> },
       { path: '*', element: <NotFound /> },
     ]
   }
