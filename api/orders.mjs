@@ -7,9 +7,8 @@ export default async function handler(req, res) {
   }
 
   try {
-    let email = req.query.email || null
-
-    // 1) Essayer via Bearer token (Supabase)
+    // 1) Email depuis Bearer (prioritaire)
+    let email = null
     const auth = req.headers.authorization || ''
     if (auth.startsWith('Bearer ')) {
       const token = auth.slice(7)
@@ -21,16 +20,22 @@ export default async function handler(req, res) {
       }
     }
 
-    // 2) Fallback requis: ?email=
-    if (!email) {
-      return res.status(401).json({ error: 'UNAUTHENTICATED' })
-    }
+    // 2) Fallback : ?email= (utile pour tests)
+    if (!email) email = req.query.email || null
+    if (!email) return res.status(401).json({ error: 'UNAUTHENTICATED' })
 
-    let query = supaService.from('orders').select('*').eq('user_email', email)
+    const emailNorm = String(email).trim().toLowerCase()
 
-    // Par défaut on cache les commandes non payées
+    let query = supaService
+      .from('orders')
+      .select('*')
+      .eq('user_email', emailNorm)
+
+    // Par défaut, on masque les commandes non payées
     const includeUnpaid = req.query.include_unpaid === '1'
-    if (!includeUnpaid) query = query.neq('status', 'en attente paiement')
+    if (!includeUnpaid) {
+      query = query.neq('status', 'en attente paiement')
+    }
 
     query = query.order('created_at', { ascending: false })
 
@@ -40,6 +45,6 @@ export default async function handler(req, res) {
     return res.status(200).json({ orders: orders || [] })
   } catch (e) {
     console.error('orders list error', e)
-    return res.status(500).json({ error: 'SERVER_ERROR', message: String(e?.message || e) })
+    return res.status(500).json({ error: 'SERVER_ERROR', message: String(e) })
   }
 }
