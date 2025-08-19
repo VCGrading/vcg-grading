@@ -7,7 +7,7 @@ export default async function handler(req, res) {
   }
 
   try {
-    // 1) Email depuis Bearer (prioritaire)
+    // 1) Email via Bearer (prioritaire)
     let email = null
     const auth = req.headers.authorization || ''
     if (auth.startsWith('Bearer ')) {
@@ -20,31 +20,39 @@ export default async function handler(req, res) {
       }
     }
 
-    // 2) Fallback : ?email= (utile pour tests)
+    // 2) Fallback pour tests: ?email=
     if (!email) email = req.query.email || null
     if (!email) return res.status(401).json({ error: 'UNAUTHENTICATED' })
 
     const emailNorm = String(email).trim().toLowerCase()
 
-    let query = supaService
-      .from('orders')
-      .select('*')
-      .eq('user_email', emailNorm)
+    // Helper: construit la requête avec/ sans les non-payées
+    const buildQuery = (includeUnpaid) => {
+      let q = supaService
+        .from('orders')
+        .select('*')
+        .ilike('user_email', emailNorm) // insensible à la casse
+        .order('created_at', { ascending: false })
+        .limit(200)
 
-    // Par défaut, on masque les commandes non payées
-    const includeUnpaid = req.query.include_unpaid === '1'
-    if (!includeUnpaid) {
-      query = query.neq('status', 'en attente paiement')
+      if (!includeUnpaid) q = q.neq('status', 'en attente paiement')
+      return q
     }
 
-    query = query.order('created_at', { ascending: false })
-
-    const { data: orders, error } = await query
+    // 1er essai: commandes payées (par défaut)
+    let { data: orders, error } = await buildQuery(false)
     if (error) throw error
 
-    return res.status(200).json({ orders: orders || [] })
+    // Si rien trouvé, on fait un fallback en incluant les non-payées.
+    if (!orders || orders.length === 0) {
+      const { data: alsoUnpaid, error: e2 } = await buildQuery(true)
+      if (e2) throw e2
+      orders = alsoUnpaid || []
+    }
+
+    return res.status(200).json({ orders })
   } catch (e) {
     console.error('orders list error', e)
-    return res.status(500).json({ error: 'SERVER_ERROR', message: String(e) })
+    return res.status(500).json({ error: 'SERVER_ERROR', message: String(e?.message || e) })
   }
 }
