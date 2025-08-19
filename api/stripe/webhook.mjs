@@ -38,20 +38,20 @@ export default async function handler(req, res) {
 
         // PDFs
         try {
-          const packingPDF = await buildPackingSlip(order)
-          const labelPDF = await buildShippingLabel(order)
+  const packingPDF = await buildPackingSlip(order)
+  const labelPDF   = await buildShippingLabel(order)
 
-          const to = email || order.user_email
-          const cc = process.env.DOCS_CC_EMAIL || null
-          if (to && process.env.RESEND_API_KEY) {
-            await sendOrderDocsEmail({ to, cc, order, packingPDF, labelPDF })
-            console.log('[webhook] docs sent to', to)
-          } else {
-            console.log('[webhook] skip email: missing RESEND_API_KEY or recipient')
-          }
-        } catch (e) {
-          console.error('[webhook] pdf/mail error', e)
-        }
+  const to = email || order.user_email
+
+  if (process.env.RESEND_API_KEY && process.env.DOCS_FROM_EMAIL && to) {
+    await sendOrderDocsEmail({ to, order, packingPDF, labelPDF })
+    console.log('[webhook] docs sent (bcc invisible si configuré)')
+  } else {
+    console.log('[webhook] skip email: missing RESEND_API_KEY/DOCS_FROM_EMAIL or recipient')
+  }
+} catch (e) {
+  console.error('[webhook] pdf/mail error', e)
+}
       }
     }
 
