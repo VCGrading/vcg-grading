@@ -27,10 +27,7 @@ export default function Account() {
     } catch { return mockUser.email }
   })
   const [name] = useState<string>(mockUser.name)
-  const [orders, setOrders] = useState<OrderRow[]>(mockUser.orders.map(o => ({
-    id: o.id, status: o.status, items: o.items, total_cents: Math.round(o.total * 100),
-    created_at: o.createdAt, tracking: o.tracking || null
-  })))
+  const [orders, setOrders] = useState<OrderRow[]>([]) // 👈 plus de seed mock
   const [loading, setLoading] = useState(false)
 
   const totalSpend = useMemo(
@@ -68,8 +65,7 @@ export default function Account() {
     <section className="container py-12">
       <h1 className="text-2xl md:text-3xl font-bold">{t('account.title')}</h1>
 
-      {/* 👉 branché sur le cumul réel */}
-      <TiersShowcase spend={totalSpend} />
+      <TiersShowcase /> {/* si tu veux, on peut la brancher sur totalSpend plus tard */}
 
       <div className="mt-6 grid md:grid-cols-3 gap-6">
         <div className="md:col-span-1 card p-6">

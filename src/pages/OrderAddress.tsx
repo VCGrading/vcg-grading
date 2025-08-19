@@ -17,13 +17,16 @@ type Address = {
   email: string
 }
 
+const isCardValid = (c: any) => (String(c?.name || '').trim().length >= 2)
+
 export default function OrderAddress() {
   const navigate = useNavigate()
+
   const [draft, setDraft] = useState<any | null>(null)
+  const [ready, setReady] = useState(false) // on attend la lecture du storage
   const [err, setErr] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
 
-  // hydrate form from storage
   const [addr, setAddr] = useState<Address>({
     firstName: '',
     lastName: '',
@@ -38,31 +41,44 @@ export default function OrderAddress() {
     email: localStorage.getItem('accountEmail') || ''
   })
 
+  // Lire le brouillon depuis localStorage au mount
   useEffect(() => {
     try {
       const raw = localStorage.getItem(STORAGE_KEY)
       if (raw) setDraft(JSON.parse(raw))
     } catch {}
+    setReady(true)
   }, [])
 
-  const hasDraft = !!draft?.plan && Array.isArray(draft?.cards) && draft.cards.length > 0
+  // Ne considérer que les cartes VALIDE
+  const validCards: any[] = (draft?.cards || []).filter(isCardValid)
+  const hasDraft = !!draft?.plan && validCards.length > 0
+
+  // Anti-bypass: si pas de brouillon valide -> redirige automatiquement
+  useEffect(() => {
+    if (!ready) return
+    if (!hasDraft) {
+      navigate('/order/new?empty=1', { replace: true })
+    }
+  }, [ready, hasDraft, navigate])
 
   const total = useMemo(() => {
     if (!hasDraft) return 0
     const base: Record<string, number> = { Standard: 11.99, Express: 29.99, Ultra: 89.99 }
     const price = base[draft.plan] ?? 0
     const couponPct = draft.appliedCoupon ? ({ WELCOME10: 10, VCG5: 5 } as Record<string, number>)[draft.appliedCoupon] ?? 0 : 0
-    const gross = price * draft.cards.length
+    const gross = price * validCards.length
     const minusCoupon = gross * (couponPct / 100)
     return Math.max(0, gross - minusCoupon)
-  }, [draft, hasDraft])
+  }, [draft, hasDraft, validCards])
 
   function update<K extends keyof Address>(key: K, val: Address[K]) {
     setAddr(a => ({ ...a, [key]: val }))
   }
 
-  function validate(): string | null {
-    if (!hasDraft) return "Votre brouillon de commande est vide. Reprenez depuis l'étape cartes."
+  function validate(d: any): string | null {
+    const vc = (d?.cards || []).filter(isCardValid)
+    if (!d?.plan || vc.length === 0) return "Votre brouillon est vide. Reprenez l'étape cartes."
     if (!addr.email || !/.+@.+\..+/.test(addr.email)) return "Email invalide."
     if (!addr.firstName) return "Prénom requis."
     if (!addr.lastName) return "Nom requis."
@@ -74,15 +90,25 @@ export default function OrderAddress() {
   }
 
   async function submit() {
-    const v = validate()
+    // Re-lecture “fraîche” + re-filtrage pour empêcher un vieux brouillon vide
+    let d = draft
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY)
+      if (raw) d = JSON.parse(raw)
+    } catch {}
+
+    const v = validate(d)
     if (v) { setErr(v); return }
+
+    const sendCards = (d.cards || []).filter(isCardValid)
+
     setErr(null); setLoading(true)
     try {
       const payload = {
         email: addr.email,
-        plan: draft.plan,
-        cards: draft.cards,
-        promoCode: draft.appliedCoupon || null,
+        plan: d.plan,
+        cards: sendCards,
+        promoCode: d.appliedCoupon || null,
         address: {
           firstName: addr.firstName,
           lastName: addr.lastName,
@@ -106,10 +132,10 @@ export default function OrderAddress() {
       const data = raw ? JSON.parse(raw) : null
       if (!r.ok) throw new Error(data?.error ? `${data.error}${data?.details ? `: ${data.details}` : ''}` : raw)
 
-      // conserve l'email pour /account
+      // Conserver l’email pour /account
       localStorage.setItem('accountEmail', addr.email)
 
-      // on peut vider le draft si tu veux
+      // (Optionnel) vider le brouillon après lancement du paiement
       // localStorage.removeItem(STORAGE_KEY)
 
       window.location.href = data.checkoutUrl
@@ -120,12 +146,22 @@ export default function OrderAddress() {
     }
   }
 
+  // Tant qu’on n’a pas fini de lire le localStorage, on évite un flash
+  if (!ready) {
+    return (
+      <section className="container py-12">
+        <div className="card p-6">Chargement…</div>
+      </section>
+    )
+  }
+
+  // Si hasDraft = false, on a déjà lancé la redirection; on peut afficher un fallback court
   if (!hasDraft) {
     return (
       <section className="container py-12">
         <div className="card p-6">
-          <div className="text-lg font-semibold mb-1">Aucune carte dans la commande</div>
-          <p className="text-muted">Reprenez l’étape précédente pour ajouter vos cartes.</p>
+          <div className="text-lg font-semibold mb-1">Redirection…</div>
+          <p className="text-muted">Aucune carte détectée dans votre brouillon.</p>
           <div className="mt-4">
             <Link to="/order/new" className="btn-primary">← Retour aux cartes</Link>
           </div>
@@ -263,7 +299,7 @@ export default function OrderAddress() {
         <aside className="card p-6 h-max md:sticky md:top-24">
           <div className="font-semibold">Récapitulatif</div>
           <div className="mt-3 text-sm space-y-2">
-            <div className="flex justify-between"><span>Cartes</span><span>{draft?.cards?.length || 0}</span></div>
+            <div className="flex justify-between"><span>Cartes</span><span>{validCards.length}</span></div>
             <div className="flex justify-between"><span>Formule</span><span>{draft?.plan}</span></div>
             {draft?.appliedCoupon && (
               <div className="flex justify-between text-muted">
@@ -271,7 +307,9 @@ export default function OrderAddress() {
               </div>
             )}
             <div className="border-t border-border/70 my-2" />
-            <div className="flex justify-between font-semibold"><span>Total estimé</span><span>{total.toFixed(2)}€</span></div>
+            <div className="flex justify-between font-semibold">
+              <span>Total estimé</span><span>{total.toFixed(2)}€</span>
+            </div>
           </div>
         </aside>
       </div>

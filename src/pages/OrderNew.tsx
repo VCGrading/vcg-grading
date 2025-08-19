@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { tierForSpend } from '../data/badges'
 import { mockUser } from '../data/mock'
@@ -23,6 +23,9 @@ const EMPTY_CARD: CardInput = {
 const STORAGE_KEY = 'orderDraft'
 const COUPONS: Record<string, number> = { WELCOME10: 10, VCG5: 5 }
 
+// Une carte est "valide" si elle a au moins un nom de 2 lettres
+const isCardValid = (c: CardInput) => (c?.name || '').trim().length >= 2
+
 export default function OrderNew() {
   const { t } = useI18n()
   const navigate = useNavigate()
@@ -31,6 +34,7 @@ export default function OrderNew() {
   const [cards, setCards] = useState<CardInput[]>([{ ...EMPTY_CARD }])
   const [couponInput, setCouponInput] = useState('')
   const [appliedCoupon, setAppliedCoupon] = useState<string | null>(null)
+  const [formErr, setFormErr] = useState<string | null>(null)
 
   // Charger brouillon
   useEffect(() => {
@@ -39,27 +43,30 @@ export default function OrderNew() {
     try {
       const d = JSON.parse(raw)
       if (d?.plan) setPlan(d.plan)
-      if (Array.isArray(d?.cards) && d.cards.length) setCards(d.cards)
+      if (Array.isArray(d?.cards)) setCards(d.cards.length ? d.cards : [{ ...EMPTY_CARD }])
       if (d?.appliedCoupon) setAppliedCoupon(d.appliedCoupon)
     } catch {}
   }, [])
 
-  // Sauver brouillon
+  // Sauver brouillon — seulement cartes valides
+  const draftValidCards = useMemo(() => cards.filter(isCardValid), [cards])
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ plan, cards, appliedCoupon }))
-  }, [plan, cards, appliedCoupon])
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ plan, cards: draftValidCards, appliedCoupon }))
+  }, [plan, draftValidCards, appliedCoupon])
 
   const resetDraft = () => {
     setPlan('Standard')
     setCards([{ ...EMPTY_CARD }])
     setAppliedCoupon(null)
     setCouponInput('')
+    setFormErr(null)
     localStorage.removeItem(STORAGE_KEY)
   }
 
+  // Pricing (on affiche un total cohérent basé sur les cartes VALIDE)
   const tier = tierForSpend(mockUser.totalSpend)
   const basePrices: Record<Plan, number> = { Standard: 11.99, Express: 29.99, Ultra: 89.99 }
-  const subtotal = basePrices[plan] * cards.length
+  const subtotal = basePrices[plan] * draftValidCards.length
   const discountTier = subtotal * (tier.discount / 100)
   const couponPct = appliedCoupon ? COUPONS[appliedCoupon] ?? 0 : 0
   const discountCoupon = subtotal * (couponPct / 100)
@@ -69,14 +76,26 @@ export default function OrderNew() {
     setCards(prev => prev.map((c, idx) => (idx === i ? { ...c, ...patch } : c)))
   }
   function addCard() { setCards(prev => [...prev, { ...EMPTY_CARD }]) }
-  function removeCard(i: number) { setCards(prev => prev.filter((_, idx) => idx !== i)) }
+  function removeCard(i: number) {
+    setCards(prev => {
+      const arr = prev.filter((_, idx) => idx !== i)
+      return arr.length ? arr : [{ ...EMPTY_CARD }]
+    })
+  }
 
   const applyCoupon = () => {
     const code = couponInput.trim().toUpperCase()
     setAppliedCoupon(COUPONS[code] ? code : null)
   }
 
-  const goNext = () => navigate('/order/address')  // 👉 étape Adresse obligatoire
+  const goNext = () => {
+    if (draftValidCards.length === 0) {
+      setFormErr('Ajoute au moins une carte avec un nom (min. 2 lettres).')
+      return
+    }
+    setFormErr(null)
+    navigate('/order/address')
+  }
 
   return (
     <section className="container py-12 md:pb-12 pb-24">
@@ -143,8 +162,7 @@ export default function OrderNew() {
                     type="button"
                     onClick={() => removeCard(i)}
                     className="text-sm text-muted hover:text-foreground"
-                    disabled={cards.length === 1}
-                    title={cards.length === 1 ? t('order.delete.disabled') : t('order.delete')}
+                    title={t('order.delete')}
                   >
                     {t('order.delete')}
                   </button>
@@ -232,15 +250,11 @@ export default function OrderNew() {
             ))}
           </div>
 
-          {/* Ajouter en bas */}
-          <div className="mt-4">
-            <button type="button" onClick={addCard} className="btn-outline">
-              {t('order.addCard')}
-            </button>
-          </div>
+          {formErr && <div className="mt-3 text-sm text-red-600 dark:text-red-400">{formErr}</div>}
 
-          {/* 👉 Étape suivante : Adresse (pas Stripe ici) */}
-          <button type="submit" className="btn-primary mt-6">Continuer</button>
+          <button type="submit" className="btn-primary mt-6" disabled={draftValidCards.length === 0}>
+            Continuer
+          </button>
           <p className="mt-2 text-xs text-muted">Étape suivante : votre adresse de retour.</p>
         </form>
 
@@ -248,7 +262,10 @@ export default function OrderNew() {
         <aside className="card p-6 h-max md:sticky md:top-24">
           <div className="font-semibold">{t('order.summary')}</div>
           <div className="mt-3 text-sm space-y-2">
-            <div className="flex justify-between"><span>{t('order.summary.cards')}</span><span>{cards.length}</span></div>
+            <div className="flex justify-between">
+              <span>{t('order.summary.cards')}</span>
+              <span>{draftValidCards.length}</span>
+            </div>
             <div className="flex justify-between"><span>{t('order.summary.plan')}</span><span>{plan}</span></div>
             <div className="flex justify-between"><span>{t('order.summary.subtotal')}</span><span>{subtotal.toFixed(2)}€</span></div>
             <div className="flex justify-between text-muted">
@@ -274,7 +291,7 @@ export default function OrderNew() {
             <div className="text-xs text-muted">{t('order.summary.total')}</div>
             <div className="text-lg font-semibold">{total.toFixed(2)}€</div>
           </div>
-          <button className="btn-primary" onClick={goNext}>
+          <button className="btn-primary" onClick={goNext} disabled={draftValidCards.length === 0}>
             Continuer
           </button>
         </div>

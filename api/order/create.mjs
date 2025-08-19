@@ -16,6 +16,13 @@ function discountForSpend(euros) {
   return pct
 }
 
+function isCardValid(c) {
+  if (!c) return false
+  const name = String(c.name || '').trim()
+  // règle simple : au moins un nom de carte
+  return name.length >= 2
+}
+
 export default async function handler(req, res) {
   const fail = (code, error, extra = {}) => res.status(code).json({ error, ...extra })
   if (req.method !== 'POST') return fail(405, 'Method not allowed')
@@ -29,23 +36,27 @@ export default async function handler(req, res) {
     return fail(501, 'SUPABASE_NOT_CONFIGURED', { envOk })
   }
 
-  // Parse body robuste
   let body = req.body
   if (typeof body === 'string') { try { body = JSON.parse(body) } catch { body = {} } }
   body = body || {}
-  const { email, plan, cards, promoCode, address } = body
 
-  // Garde-fous serveur
-  if (!email || !plan || !Array.isArray(cards) || cards.length === 0) {
-    return fail(400, 'Bad payload', { debug: { hasEmail: !!email, plan, cardsLen: Array.isArray(cards) ? cards.length : null } })
+  const { email, plan, cards, promoCode, address } = body
+  if (!email || !plan || !Array.isArray(cards)) {
+    return fail(400, 'Bad payload', { debug: { hasEmail: !!email, plan, hasCardsArray: Array.isArray(cards) } })
+  }
+
+  // ne garder que les cartes valides (empêche le bypass)
+  const validCards = cards.filter(isCardValid)
+  if (validCards.length === 0) {
+    return fail(400, 'NO_VALID_CARDS', { message: 'Aucune carte valide.' })
   }
 
   // Prix de base
   const base = { Standard: 1199, Express: 2999, Ultra: 8999 }
   if (!base[plan]) return fail(400, 'Unknown plan', { plan })
-  const subtotal = base[plan] * cards.length // centimes
+  const subtotal = base[plan] * validCards.length // centimes
 
-  // Cumul payé réel (on exclut les commandes en attente paiement)
+  // Cumul payé réel (exclut "en attente paiement")
   let userSpendEuros = 0
   try {
     const { data: prev, error: sumErr } = await supaService
@@ -69,7 +80,7 @@ export default async function handler(req, res) {
   const orderId = `ORD-${Math.floor(1000 + Math.random() * 9000)}`
 
   try {
-    // 1) upsert user par email
+    // 1) upsert user
     const { error: userErr } = await supaService
       .from('users')
       .upsert({ email }, { onConflict: 'email' })
@@ -80,8 +91,8 @@ export default async function handler(req, res) {
       id: orderId,
       user_email: email,
       plan,
-      status: 'en attente paiement', // 👈 n’apparaît pas dans l’historique
-      items: cards.length,
+      status: 'en attente paiement',
+      items: validCards.length,
       total_cents,
       promo_code: promoCode || null,
       return_address: address || null,
@@ -89,7 +100,7 @@ export default async function handler(req, res) {
     if (orderErr) return fail(500, 'DB_INSERT_ORDER', { details: orderErr.message })
 
     // 3) insert items
-    const rows = cards.map(c => ({
+    const rows = validCards.map(c => ({
       order_id: orderId,
       game: c.game ?? null,
       name: c.name ?? null,
@@ -107,7 +118,6 @@ export default async function handler(req, res) {
     const secret = process.env.STRIPE_SECRET_KEY
 
     if (!secret) {
-      // La commande reste "en attente paiement" → n'est pas listée
       const checkoutUrl = `${site}/account?order=${orderId}&mock=1`
       return res.status(200).json({ checkoutUrl, orderId, mode: 'mock' })
     }
@@ -129,7 +139,7 @@ export default async function handler(req, res) {
         price_data: {
           currency: 'eur',
           unit_amount: total_cents,
-          product_data: { name: `VCG ${plan} × ${cards.length} carte(s)` },
+          product_data: { name: `VCG ${plan} × ${validCards.length} carte(s)` },
         },
       }],
       discounts,

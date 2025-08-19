@@ -17,12 +17,31 @@ export default async function handler(req, res) {
     const sig = req.headers['stripe-signature']
     const event = stripe.webhooks.constructEvent(raw, sig, whSecret)
 
-    if (event.type === 'checkout.session.completed') {
-      const session = event.data.object
-      const orderId = session?.metadata?.orderId
-      if (orderId) {
-        await supaService.from('orders').update({ status: 'réceptionnée' }).eq('id', orderId)
+    const mark = async (orderId, status) => {
+      if (!orderId) return
+      await supaService.from('orders').update({ status }).eq('id', orderId)
+    }
+
+    switch (event.type) {
+      case 'checkout.session.completed': {
+        const session = event.data.object
+        const orderId = session?.metadata?.orderId
+        await mark(orderId, 'créée')
+        break
       }
+      case 'checkout.session.expired':
+      case 'checkout.session.async_payment_failed':
+      case 'payment_intent.payment_failed': {
+        const data = event.data.object
+        const orderId =
+          data?.metadata?.orderId ||
+          data?.checkout_session?.metadata?.orderId ||
+          data?.id // fallback
+        await mark(orderId, 'annulée')
+        break
+      }
+      default:
+        break
     }
 
     return res.json({ received: true })
