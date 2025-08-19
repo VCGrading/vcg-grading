@@ -1,13 +1,12 @@
 // api/stripe/webhook.mjs
 import { supaService } from '../_db.mjs'
-export const config = { api: { bodyParser: false } } // important: raw body
+export const config = { api: { bodyParser: false } }
 
 export default async function handler(req, res) {
   const secret = process.env.STRIPE_SECRET_KEY
   const whSecret = process.env.STRIPE_WEBHOOK_SECRET
   if (!secret || !whSecret) return res.status(501).json({ error: 'Stripe webhook not configured' })
 
-  // lire le raw body
   const chunks = []
   for await (const chunk of req) chunks.push(chunk)
   const raw = Buffer.concat(chunks)
