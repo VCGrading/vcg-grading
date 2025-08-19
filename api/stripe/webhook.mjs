@@ -10,7 +10,6 @@ export default async function handler(req, res) {
   const whSecret = process.env.STRIPE_WEBHOOK_SECRET
   if (!secret || !whSecret) return res.status(501).json({ error: 'Stripe webhook not configured' })
 
-  // Lire raw body
   const chunks = []
   for await (const c of req) chunks.push(c)
   const raw = Buffer.concat(chunks)
@@ -24,37 +23,34 @@ export default async function handler(req, res) {
     if (event.type === 'checkout.session.completed') {
       const session = event.data.object
       const orderId = session?.metadata?.orderId
-      const customerEmail = session?.customer_details?.email || session?.customer_email
+      const email = session?.customer_details?.email || session?.customer_email
+
+      console.log('[webhook] completed for', orderId, 'email=', email)
 
       if (orderId) {
-        // Récupérer la commande + items + adresse
         const { data: order, error } = await supaService
-          .from('orders')
-          .select('*, order_items(*)')
-          .eq('id', orderId)
-          .single()
+          .from('orders').select('*, order_items(*)').eq('id', orderId).single()
         if (error || !order) throw error || new Error('Order not found')
 
-        // Idempotence simple: si déjà payée, ne renvoie pas en boucle les mails
-        const alreadyPaid = order.status === 'payée'
-        if (!alreadyPaid) {
+        if (order.status !== 'payée') {
           await supaService.from('orders').update({ status: 'payée' }).eq('id', orderId)
         }
 
-        // Générer PDFs
-        const packingPDF = await buildPackingSlip(order)
-        const labelPDF   = await buildShippingLabel(order)
-
-        // Envoyer email (client + toi en CC)
-        const cc = process.env.DOCS_CC_EMAIL || null
-        const to = customerEmail || order.user_email
+        // PDFs
         try {
-          if (to) {
+          const packingPDF = await buildPackingSlip(order)
+          const labelPDF = await buildShippingLabel(order)
+
+          const to = email || order.user_email
+          const cc = process.env.DOCS_CC_EMAIL || null
+          if (to && process.env.RESEND_API_KEY) {
             await sendOrderDocsEmail({ to, cc, order, packingPDF, labelPDF })
+            console.log('[webhook] docs sent to', to)
+          } else {
+            console.log('[webhook] skip email: missing RESEND_API_KEY or recipient')
           }
         } catch (e) {
-          console.error('email send error', e)
-          // on n'échoue pas le webhook pour éviter les retries Stripe
+          console.error('[webhook] pdf/mail error', e)
         }
       }
     }
