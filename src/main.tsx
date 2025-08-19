@@ -12,6 +12,8 @@ import OrderDetails from './pages/OrderDetails'
 import CertificatePage from './pages/Certificate'
 import NotFound from './pages/NotFound'
 import { I18nProvider } from './i18n'
+import Login from './pages/Login'
+import { AuthProvider } from './auth/AuthProvider'
 
 const router = createBrowserRouter([
   {
@@ -19,6 +21,7 @@ const router = createBrowserRouter([
     element: <App />,
     children: [
       { index: true, element: <Landing /> },
+      { path: 'login', element: <Login /> },
       { path: 'verify', element: <Verify /> },
       { path: 'verify/:certId', element: <Verify /> },
       { path: 'cert/:certId', element: <CertificatePage /> },
@@ -26,7 +29,6 @@ const router = createBrowserRouter([
       { path: 'order/new', element: <OrderNew /> },
       { path: 'order/address', element: <OrderAddress /> },
       { path: 'orders/:orderId', element: <OrderDetails /> },
-      { path: 'orders', element: <OrderDetails /> },
       { path: '*', element: <NotFound /> },
     ]
   }
@@ -35,7 +37,9 @@ const router = createBrowserRouter([
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <I18nProvider>
-      <RouterProvider router={router} />
+      <AuthProvider>
+        <RouterProvider router={router} />
+      </AuthProvider>
     </I18nProvider>
   </React.StrictMode>
 )

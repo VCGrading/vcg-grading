@@ -1,5 +1,5 @@
 // api/order/create.mjs
-import { supaService } from '../_db.mjs'
+import { supaService, supaAnon } from '../_db.mjs'
 
 const TIERS = [
   { min: 0,    discount: 0 },
@@ -9,111 +9,72 @@ const TIERS = [
   { min: 1000, discount: 8 },
   { min: 2000, discount: 12 },
 ]
-
-function discountForSpend(euros) {
-  let pct = 0
-  for (const t of TIERS) if (euros >= t.min) pct = t.discount
-  return pct
-}
-
-function isCardValid(c) {
-  if (!c) return false
-  const name = String(c.name || '').trim()
-  // règle simple : au moins un nom de carte
-  return name.length >= 2
-}
+const PROMOS = { WELCOME10: 10, VCG5: 5 }
+const base = { Standard: 1199, Express: 2999, Ultra: 8999 }
+const isCardValid = (c) => !!c && String(c.name || '').trim().length >= 2
+const discountForSpend = (euros) => TIERS.reduce((acc, t) => euros >= t.min ? t.discount : acc, 0)
 
 export default async function handler(req, res) {
-  const fail = (code, error, extra = {}) => res.status(code).json({ error, ...extra })
+  const fail = (c, m, extra = {}) => res.status(c).json({ error: m, ...extra })
   if (req.method !== 'POST') return fail(405, 'Method not allowed')
 
-  const envOk = {
-    SUPABASE_URL: !!process.env.SUPABASE_URL,
-    SUPABASE_SERVICE_ROLE: !!process.env.SUPABASE_SERVICE_ROLE,
-    STRIPE_SECRET_KEY: !!process.env.STRIPE_SECRET_KEY, // optionnel
-  }
-  if (!envOk.SUPABASE_URL || !envOk.SUPABASE_SERVICE_ROLE) {
-    return fail(501, 'SUPABASE_NOT_CONFIGURED', { envOk })
-  }
+  // Auth obligatoire
+  const auth = req.headers.authorization || ''
+  const token = auth.startsWith('Bearer ') ? auth.slice(7) : null
+  if (!token) return fail(401, 'UNAUTHENTICATED')
 
+  const { data, error: uerr } = await supaAnon.auth.getUser(token)
+  if (uerr || !data?.user?.email) return fail(401, 'INVALID_TOKEN')
+  const email = data.user.email
+
+  // Parse body
   let body = req.body
   if (typeof body === 'string') { try { body = JSON.parse(body) } catch { body = {} } }
   body = body || {}
+  const { plan, cards, promoCode, address } = body
 
-  const { email, plan, cards, promoCode, address } = body
-  if (!email || !plan || !Array.isArray(cards)) {
-    return fail(400, 'Bad payload', { debug: { hasEmail: !!email, plan, hasCardsArray: Array.isArray(cards) } })
-  }
-
-  // ne garder que les cartes valides (empêche le bypass)
+  if (!plan || !Array.isArray(cards)) return fail(400, 'Bad payload')
   const validCards = cards.filter(isCardValid)
-  if (validCards.length === 0) {
-    return fail(400, 'NO_VALID_CARDS', { message: 'Aucune carte valide.' })
-  }
+  if (!validCards.length) return fail(400, 'NO_VALID_CARDS')
 
-  // Prix de base
-  const base = { Standard: 1199, Express: 2999, Ultra: 8999 }
-  if (!base[plan]) return fail(400, 'Unknown plan', { plan })
-  const subtotal = base[plan] * validCards.length // centimes
+  if (!base[plan]) return fail(400, 'Unknown plan')
+  const subtotal = base[plan] * validCards.length
 
-  // Cumul payé réel (exclut "en attente paiement")
+  // cumul payé (exclut en attente paiement)
   let userSpendEuros = 0
   try {
-    const { data: prev, error: sumErr } = await supaService
-      .from('orders')
-      .select('total_cents,status')
-      .eq('user_email', email)
-      .neq('status', 'en attente paiement')
-
-    if (sumErr) throw sumErr
-    userSpendEuros = Math.max(0, (prev || []).reduce((s, o) => s + (o.total_cents || 0), 0) / 100)
+    const { data: prev } = await supaService
+      .from('orders').select('total_cents,status')
+      .eq('user_email', email).neq('status', 'en attente paiement')
+    userSpendEuros = Math.max(0, (prev || []).reduce((s,o)=>s+(o.total_cents||0),0)/100)
   } catch { userSpendEuros = 0 }
 
   const tierPct = discountForSpend(userSpendEuros)
-  const PROMOS = { WELCOME10: 10, VCG5: 5 }
   const couponPct = PROMOS[String(promoCode || '').toUpperCase()] || 0
-
-  const tierDiscountCents = Math.floor(subtotal * (tierPct / 100))
-  const couponDiscountCents = Math.floor(subtotal * (couponPct / 100))
-  const total_cents = Math.max(0, subtotal - tierDiscountCents - couponDiscountCents)
+  const total_cents = Math.max(0, subtotal - Math.floor(subtotal * tierPct / 100) - Math.floor(subtotal * couponPct / 100))
 
   const orderId = `ORD-${Math.floor(1000 + Math.random() * 9000)}`
-
   try {
-    // 1) upsert user
-    const { error: userErr } = await supaService
-      .from('users')
-      .upsert({ email }, { onConflict: 'email' })
-    if (userErr) return fail(500, 'DB_UPSERT_USER', { details: userErr.message })
+    await supaService.from('users').upsert({ email }, { onConflict: 'email' })
 
-    // 2) insert order en "en attente paiement"
-    const { error: orderErr } = await supaService.from('orders').insert({
-      id: orderId,
-      user_email: email,
-      plan,
+    const { error: e1 } = await supaService.from('orders').insert({
+      id: orderId, user_email: email, plan,
       status: 'en attente paiement',
-      items: validCards.length,
-      total_cents,
-      promo_code: promoCode || null,
-      return_address: address || null,
+      items: validCards.length, total_cents,
+      promo_code: promoCode || null, return_address: address || null,
     })
-    if (orderErr) return fail(500, 'DB_INSERT_ORDER', { details: orderErr.message })
+    if (e1) throw e1
 
-    // 3) insert items
     const rows = validCards.map(c => ({
       order_id: orderId,
-      game: c.game ?? null,
-      name: c.name ?? null,
-      set: c.set ?? null,
-      number: c.number ?? null,
+      game: c.game ?? null, name: c.name ?? null, set: c.set ?? null, number: c.number ?? null,
       year: c.year ? Number(c.year) : null,
       declared_value_cents: c.declared ? Math.round(Number(c.declared) * 100) : null,
       notes: c.notes ?? null,
     }))
-    const { error: itemsErr } = await supaService.from('order_items').insert(rows)
-    if (itemsErr) return fail(500, 'DB_INSERT_ITEMS', { details: itemsErr.message })
+    const { error: e2 } = await supaService.from('order_items').insert(rows)
+    if (e2) throw e2
 
-    // 4) Stripe (mock si pas de clé)
     const site = process.env.SITE_URL || `https://${req.headers.host}`
     const secret = process.env.STRIPE_SECRET_KEY
 
@@ -150,6 +111,7 @@ export default async function handler(req, res) {
 
     return res.status(200).json({ checkoutUrl: session.url, orderId })
   } catch (e) {
+    console.error('order/create error', e)
     return fail(500, 'SERVER_ERROR', { message: String(e?.message || e) })
   }
 }

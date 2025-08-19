@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { useI18n } from '../i18n'
 import Badge from '../components/Badge'
 import TiersShowcase from '../components/TiersShowcase'
 import { tierForSpend } from '../data/badges'
-import { mockUser } from '../data/mock'
+import { useAuth } from '../auth/AuthProvider'
 
 type OrderRow = {
   id: string
@@ -14,21 +14,19 @@ type OrderRow = {
   created_at: string
   tracking?: string | null
   plan?: string
-  user_email?: string
 }
 
 export default function Account() {
   const { t } = useI18n()
+  const { user, session, loading } = useAuth()
+  const navigate = useNavigate()
 
-  const [email, setEmail] = useState<string>(() => {
-    try {
-      const draft = JSON.parse(localStorage.getItem('orderDraft') || '{}')
-      return draft?.email || localStorage.getItem('accountEmail') || mockUser.email
-    } catch { return mockUser.email }
-  })
-  const [name] = useState<string>(mockUser.name)
-  const [orders, setOrders] = useState<OrderRow[]>([]) // 👈 plus de seed mock
-  const [loading, setLoading] = useState(false)
+  useEffect(() => {
+    if (!loading && !user) navigate('/login?next=/account', { replace: true })
+  }, [loading, user, navigate])
+
+  const [orders, setOrders] = useState<OrderRow[]>([])
+  const [fetching, setFetching] = useState(false)
 
   const totalSpend = useMemo(
     () => Math.max(0, orders.reduce((s, o) => s + (o.total_cents || 0), 0) / 100),
@@ -37,40 +35,37 @@ export default function Account() {
   const tier = tierForSpend(totalSpend)
 
   useEffect(() => {
-    if (!email) return
-    setLoading(true)
-    fetch(`/api/orders?email=${encodeURIComponent(email)}`)
+    if (!session) return
+    setFetching(true)
+    fetch('/api/orders', {
+      headers: { Authorization: `Bearer ${session.access_token}` }
+    })
       .then(async r => {
         const raw = await r.text()
         const data = raw ? JSON.parse(raw) : null
         if (!r.ok) throw new Error(data?.error || raw || `HTTP ${r.status}`)
         const list: OrderRow[] = (data?.orders || []).map((o: any) => ({
-          id: o.id,
-          status: o.status,
-          items: o.items,
-          total_cents: o.total_cents,
-          created_at: o.created_at,
-          tracking: o.tracking ?? null,
-          plan: o.plan,
-          user_email: o.user_email
+          id: o.id, status: o.status, items: o.items, total_cents: o.total_cents, created_at: o.created_at, plan: o.plan, tracking: o.tracking ?? null
         }))
         setOrders(list)
-        localStorage.setItem('accountEmail', email)
       })
       .catch(() => {})
-      .finally(() => setLoading(false))
-  }, [email])
+      .finally(() => setFetching(false))
+  }, [session])
+
+  if (loading || !user) return null
 
   return (
     <section className="container py-12">
       <h1 className="text-2xl md:text-3xl font-bold">{t('account.title')}</h1>
 
-      <TiersShowcase /> {/* si tu veux, on peut la brancher sur totalSpend plus tard */}
+      {/* Branché sur le montant réel */}
+      <TiersShowcase spend={totalSpend} />
 
       <div className="mt-6 grid md:grid-cols-3 gap-6">
         <div className="md:col-span-1 card p-6">
-          <div className="font-semibold">{name}</div>
-          <div className="text-sm text-muted">{email}</div>
+          <div className="font-semibold">{user.email?.split('@')[0]}</div>
+          <div className="text-sm text-muted">{user.email}</div>
           <div className="mt-4 flex items-center gap-2">
             <Badge tier={tier.tier} />
             <div className="text-sm text-muted">-{tier.discount}% {t('account.permanentDiscount')}</div>
@@ -78,7 +73,7 @@ export default function Account() {
           <div className="mt-4 text-sm text-muted">
             {t('account.cumulative')}: <b>{totalSpend.toFixed(2)}€</b>
           </div>
-          {loading && <div className="mt-3 text-xs text-muted">Mise à jour…</div>}
+          {fetching && <div className="mt-3 text-xs text-muted">Mise à jour…</div>}
         </div>
 
         <div className="md:col-span-2 card p-0 overflow-hidden">
@@ -106,7 +101,7 @@ export default function Account() {
                   </td>
                 </tr>
               ))}
-              {orders.length === 0 && !loading && (
+              {orders.length === 0 && !fetching && (
                 <tr className="border-t border-border/70">
                   <td className="px-4 py-6 text-muted" colSpan={5}>
                     {t('account.empty') || 'Aucune commande pour cet email.'}

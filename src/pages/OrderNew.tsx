@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { tierForSpend } from '../data/badges'
 import { mockUser } from '../data/mock'
 import { useI18n } from '../i18n'
+import { useAuth } from '../auth/AuthProvider'
 
 type Plan = 'Standard' | 'Express' | 'Ultra'
 type CardInput = {
@@ -29,6 +30,12 @@ const isCardValid = (c: CardInput) => (c?.name || '').trim().length >= 2
 export default function OrderNew() {
   const { t } = useI18n()
   const navigate = useNavigate()
+  const { user, loading } = useAuth()
+
+  // Redirige vers /login si pas connecté
+  useEffect(() => {
+    if (!loading && !user) navigate('/login?next=/order/new', { replace: true })
+  }, [loading, user, navigate])
 
   const [plan, setPlan] = useState<Plan>('Standard')
   const [cards, setCards] = useState<CardInput[]>([{ ...EMPTY_CARD }])
@@ -96,6 +103,8 @@ export default function OrderNew() {
     setFormErr(null)
     navigate('/order/address')
   }
+
+  if (loading || !user) return null
 
   return (
     <section className="container py-12 md:pb-12 pb-24">

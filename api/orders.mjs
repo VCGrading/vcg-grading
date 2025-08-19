@@ -1,16 +1,21 @@
-// api/orders.mjs   -> GET /api/orders?email=x@y.com
-import { supaService } from './_db.mjs'
+// api/orders.mjs   -> GET /api/orders
+import { supaService, supaAnon } from './_db.mjs'
 
 export default async function handler(req, res) {
-  const email = req.query.email
-  if (!email) return res.status(400).json({ error: 'Missing email' })
-
   try {
+    const auth = req.headers.authorization || ''
+    const token = auth.startsWith('Bearer ') ? auth.slice(7) : null
+    if (!token) return res.status(401).json({ error: 'UNAUTHENTICATED' })
+
+    const { data, error: uerr } = await supaAnon.auth.getUser(token)
+    if (uerr || !data?.user?.email) return res.status(401).json({ error: 'INVALID_TOKEN' })
+    const email = data.user.email
+
     const { data: orders, error } = await supaService
       .from('orders')
       .select('*')
       .eq('user_email', email)
-      .neq('status', 'en attente paiement') // 👈 on cache les commandes non payées
+      .neq('status', 'en attente paiement') // on cache les non-payées
       .order('created_at', { ascending: false })
 
     if (error) throw error

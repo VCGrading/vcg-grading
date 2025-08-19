@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
+import { useAuth } from '../auth/AuthProvider'
 
 const STORAGE_KEY = 'orderDraft'
 
@@ -21,11 +22,17 @@ const isCardValid = (c: any) => (String(c?.name || '').trim().length >= 2)
 
 export default function OrderAddress() {
   const navigate = useNavigate()
+  const { user, session, loading } = useAuth()
+
+  // Redirige vers /login si pas connecté
+  useEffect(() => {
+    if (!loading && !user) navigate('/login?next=/order/address', { replace: true })
+  }, [loading, user, navigate])
 
   const [draft, setDraft] = useState<any | null>(null)
-  const [ready, setReady] = useState(false) // on attend la lecture du storage
+  const [ready, setReady] = useState(false) // attendre la lecture du storage
   const [err, setErr] = useState<string | null>(null)
-  const [loading, setLoading] = useState(false)
+  const [loadingPay, setLoadingPay] = useState(false)
 
   const [addr, setAddr] = useState<Address>({
     firstName: '',
@@ -38,10 +45,10 @@ export default function OrderAddress() {
     country: 'FR',
     phone: '',
     instructions: '',
-    email: localStorage.getItem('accountEmail') || ''
+    email: '' // rempli avec user.email (non éditable)
   })
 
-  // Lire le brouillon depuis localStorage au mount
+  // Lire le brouillon au mount
   useEffect(() => {
     try {
       const raw = localStorage.getItem(STORAGE_KEY)
@@ -50,6 +57,11 @@ export default function OrderAddress() {
     setReady(true)
   }, [])
 
+  // Email forcé depuis la session
+  useEffect(() => {
+    if (user?.email) setAddr(a => ({ ...a, email: user.email as string }))
+  }, [user?.email])
+
   // Ne considérer que les cartes VALIDE
   const validCards: any[] = (draft?.cards || []).filter(isCardValid)
   const hasDraft = !!draft?.plan && validCards.length > 0
@@ -57,9 +69,7 @@ export default function OrderAddress() {
   // Anti-bypass: si pas de brouillon valide -> redirige automatiquement
   useEffect(() => {
     if (!ready) return
-    if (!hasDraft) {
-      navigate('/order/new?empty=1', { replace: true })
-    }
+    if (!hasDraft) navigate('/order/new?empty=1', { replace: true })
   }, [ready, hasDraft, navigate])
 
   const total = useMemo(() => {
@@ -79,7 +89,7 @@ export default function OrderAddress() {
   function validate(d: any): string | null {
     const vc = (d?.cards || []).filter(isCardValid)
     if (!d?.plan || vc.length === 0) return "Votre brouillon est vide. Reprenez l'étape cartes."
-    if (!addr.email || !/.+@.+\..+/.test(addr.email)) return "Email invalide."
+    // plus de validation d'email ici : c'est le mail du compte (non éditable)
     if (!addr.firstName) return "Prénom requis."
     if (!addr.lastName) return "Nom requis."
     if (!addr.line1) return "Adresse requise."
@@ -90,7 +100,7 @@ export default function OrderAddress() {
   }
 
   async function submit() {
-    // Re-lecture “fraîche” + re-filtrage pour empêcher un vieux brouillon vide
+    // Re-lecture “fraîche” + re-filtrage
     let d = draft
     try {
       const raw = localStorage.getItem(STORAGE_KEY)
@@ -102,10 +112,9 @@ export default function OrderAddress() {
 
     const sendCards = (d.cards || []).filter(isCardValid)
 
-    setErr(null); setLoading(true)
+    setErr(null); setLoadingPay(true)
     try {
       const payload = {
-        email: addr.email,
         plan: d.plan,
         cards: sendCards,
         promoCode: d.appliedCoupon || null,
@@ -125,29 +134,26 @@ export default function OrderAddress() {
 
       const r = await fetch('/api/order/create', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {})
+        },
         body: JSON.stringify(payload)
       })
       const raw = await r.text()
       const data = raw ? JSON.parse(raw) : null
       if (!r.ok) throw new Error(data?.error ? `${data.error}${data?.details ? `: ${data.details}` : ''}` : raw)
 
-      // Conserver l’email pour /account
-      localStorage.setItem('accountEmail', addr.email)
-
-      // (Optionnel) vider le brouillon après lancement du paiement
-      // localStorage.removeItem(STORAGE_KEY)
-
       window.location.href = data.checkoutUrl
     } catch (e: any) {
       setErr(e?.message || 'SERVER_ERROR')
     } finally {
-      setLoading(false)
+      setLoadingPay(false)
     }
   }
 
-  // Tant qu’on n’a pas fini de lire le localStorage, on évite un flash
-  if (!ready) {
+  // tant que l’auth ou le storage ne sont pas prêts
+  if (loading || !user || !ready) {
     return (
       <section className="container py-12">
         <div className="card p-6">Chargement…</div>
@@ -155,7 +161,6 @@ export default function OrderAddress() {
     )
   }
 
-  // Si hasDraft = false, on a déjà lancé la redirection; on peut afficher un fallback court
   if (!hasDraft) {
     return (
       <section className="container py-12">
@@ -184,11 +189,9 @@ export default function OrderAddress() {
             <div>
               <label className="text-sm text-muted">Email</label>
               <input
-                type="email"
                 value={addr.email}
-                onChange={e => update('email', e.target.value)}
-                placeholder="vous@exemple.com"
-                className="mt-1 w-full rounded-lg border border-border bg-white dark:bg-slate-900 px-4 py-2"
+                disabled
+                className="mt-1 w-full rounded-lg border border-border bg-slate-100 dark:bg-slate-900/60 px-4 py-2"
               />
             </div>
             <div />
@@ -290,8 +293,8 @@ export default function OrderAddress() {
 
           {err && <div className="mt-4 text-sm text-red-600 dark:text-red-400">{err}</div>}
 
-          <button type="button" className="btn-primary mt-6" onClick={submit} disabled={loading}>
-            {loading ? 'Redirection…' : 'Passer au paiement'}
+          <button type="button" className="btn-primary mt-6" onClick={submit} disabled={loadingPay}>
+            {loadingPay ? 'Redirection…' : 'Passer au paiement'}
           </button>
         </div>
 
@@ -321,8 +324,8 @@ export default function OrderAddress() {
             <div className="text-xs text-muted">Total estimé</div>
             <div className="text-lg font-semibold">{total.toFixed(2)}€</div>
           </div>
-          <button className="btn-primary" onClick={submit} disabled={loading}>
-            {loading ? '...' : 'Payer'}
+          <button className="btn-primary" onClick={submit} disabled={loadingPay}>
+            {loadingPay ? '...' : 'Payer'}
           </button>
         </div>
       </div>

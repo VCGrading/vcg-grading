@@ -10,13 +10,15 @@ const TIERS = [
   { key: 'bois',    label: 'Bois',    min: 0,    discount: 0,  dot: 'bg-amber-600' },
   { key: 'pierre',  label: 'Pierre',  min: 100,  discount: 2,  dot: 'bg-slate-400' },
   { key: 'bronze',  label: 'Bronze',  min: 250,  discount: 4,  dot: 'bg-orange-500' },
-  { key: 'argent',  label: 'Argent',  min: 500,  discount: 6,  dot: 'bg-slate-400' },
+  { key: 'argent',  label: 'Argent',  min: 500,  discount: 6,  dot: 'bg-slate-300' },
   { key: 'or',      label: 'Or',      min: 1000, discount: 8,  dot: 'bg-yellow-500' },
   { key: 'diamant', label: 'Diamant', min: 2000, discount: 12, dot: 'bg-sky-500' },
 ] as const
 
 export default function TiersShowcase({ spend: spendProp }: Props) {
-  const spend = typeof spendProp === 'number' ? spendProp : (mockUser.totalSpend ?? 0)
+  const spend = typeof spendProp === 'number'
+    ? spendProp
+    : (typeof mockUser?.totalSpend === 'number' ? mockUser.totalSpend : 0)
 
   const current = useMemo(() => {
     let idx = 0
