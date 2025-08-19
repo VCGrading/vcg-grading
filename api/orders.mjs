@@ -1,15 +1,18 @@
-// api/orders.mjs
+// api/orders.mjs   -> GET /api/orders?email=x@y.com
 import { supaService } from './_db.mjs'
 
 export default async function handler(req, res) {
   const email = req.query.email
   if (!email) return res.status(400).json({ error: 'Missing email' })
+
   try {
     const { data: orders, error } = await supaService
       .from('orders')
       .select('*')
       .eq('user_email', email)
+      .neq('status', 'en attente paiement') // 👈 on cache les commandes non payées
       .order('created_at', { ascending: false })
+
     if (error) throw error
     return res.status(200).json({ orders })
   } catch (e) {

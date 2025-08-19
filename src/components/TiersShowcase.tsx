@@ -1,116 +1,323 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { useNavigate, Link } from 'react-router-dom'
 
-const TIERS = [
-  { key: 'bois',    label: 'Bois',    min: 0,    discount: 0,  dot: 'bg-amber-600' },
-  { key: 'pierre',  label: 'Pierre',  min: 100,  discount: 2,  dot: 'bg-slate-400' },
-  { key: 'bronze',  label: 'Bronze',  min: 250,  discount: 4,  dot: 'bg-orange-500' },
-  { key: 'argent',  label: 'Argent',  min: 500,  discount: 6,  dot: 'bg-slate-400' },
-  { key: 'or',      label: 'Or',      min: 1000, discount: 8,  dot: 'bg-yellow-500' },
-  { key: 'diamant', label: 'Diamant', min: 2000, discount: 12, dot: 'bg-sky-500' },
-] as const
+const STORAGE_KEY = 'orderDraft'
 
-type Props = { spend: number } // cumul en €
+type Address = {
+  firstName: string
+  lastName: string
+  company?: string
+  line1: string
+  line2?: string
+  postalCode: string
+  city: string
+  country: string
+  phone?: string
+  instructions?: string
+  email: string
+}
 
-export default function TiersShowcase({ spend }: Props) {
-  // Palier courant + index
-  const current = useMemo(() => {
-    let idx = 0
-    for (let i = 0; i < TIERS.length; i++) if (spend >= TIERS[i].min) idx = i
-    return { ...TIERS[idx], idx }
-  }, [spend])
+export default function OrderAddress() {
+  const navigate = useNavigate()
 
-  const next = TIERS[current.idx + 1] ?? null
-  const rangeMin = current.min
-  const rangeMax = next ? next.min : rangeMin + 1
-  const progress = Math.max(0, Math.min(1, (spend - rangeMin) / (rangeMax - rangeMin)))
-  const remaining = next ? Math.max(0, next.min - spend) : 0
+  const [draft, setDraft] = useState<any | null>(null)
+  const [ready, setReady] = useState(false) // ✅ on attend d’avoir lu le localStorage
+  const [err, setErr] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  const [addr, setAddr] = useState<Address>({
+    firstName: '',
+    lastName: '',
+    company: '',
+    line1: '',
+    line2: '',
+    postalCode: '',
+    city: '',
+    country: 'FR',
+    phone: '',
+    instructions: '',
+    email: localStorage.getItem('accountEmail') || ''
+  })
+
+  // Lire le brouillon depuis localStorage au mount
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY)
+      if (raw) setDraft(JSON.parse(raw))
+    } catch {}
+    setReady(true)
+  }, [])
+
+  const hasDraft = !!draft?.plan && Array.isArray(draft?.cards) && draft.cards.length > 0
+
+  // 🚫 Anti-bypass: si pas de brouillon valide -> redirige automatiquement
+  useEffect(() => {
+    if (!ready) return
+    if (!hasDraft) {
+      navigate('/order/new?empty=1', { replace: true })
+    }
+  }, [ready, hasDraft, navigate])
+
+  const total = useMemo(() => {
+    if (!hasDraft) return 0
+    const base: Record<string, number> = { Standard: 11.99, Express: 29.99, Ultra: 89.99 }
+    const price = base[draft.plan] ?? 0
+    const couponPct = draft.appliedCoupon ? ({ WELCOME10: 10, VCG5: 5 } as Record<string, number>)[draft.appliedCoupon] ?? 0 : 0
+    const gross = price * draft.cards.length
+    const minusCoupon = gross * (couponPct / 100)
+    return Math.max(0, gross - minusCoupon)
+  }, [draft, hasDraft])
+
+  function update<K extends keyof Address>(key: K, val: Address[K]) {
+    setAddr(a => ({ ...a, [key]: val }))
+  }
+
+  function validate(d: any): string | null {
+    if (!d?.plan || !Array.isArray(d?.cards) || d.cards.length === 0) return "Votre brouillon est vide. Reprenez l'étape cartes."
+    if (!addr.email || !/.+@.+\..+/.test(addr.email)) return "Email invalide."
+    if (!addr.firstName) return "Prénom requis."
+    if (!addr.lastName) return "Nom requis."
+    if (!addr.line1) return "Adresse requise."
+    if (!addr.postalCode) return "Code postal requis."
+    if (!addr.city) return "Ville requise."
+    if (!addr.country) return "Pays requis."
+    return null
+  }
+
+  async function submit() {
+    // 🔁 Re-lecture “fraîche” pour empêcher le submit avec un brouillon devenu vide
+    let d = draft
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY)
+      if (raw) d = JSON.parse(raw)
+    } catch {}
+
+    const v = validate(d)
+    if (v) { setErr(v); return }
+
+    setErr(null); setLoading(true)
+    try {
+      const payload = {
+        email: addr.email,
+        plan: d.plan,
+        cards: d.cards,
+        promoCode: d.appliedCoupon || null,
+        address: {
+          firstName: addr.firstName,
+          lastName: addr.lastName,
+          company: addr.company || null,
+          line1: addr.line1,
+          line2: addr.line2 || null,
+          postalCode: addr.postalCode,
+          city: addr.city,
+          country: addr.country,
+          phone: addr.phone || null,
+          instructions: addr.instructions || null
+        }
+      }
+
+      const r = await fetch('/api/order/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      })
+      const raw = await r.text()
+      const data = raw ? JSON.parse(raw) : null
+      if (!r.ok) throw new Error(data?.error ? `${data.error}${data?.details ? `: ${data.details}` : ''}` : raw)
+
+      // Conserver l’email pour /account
+      localStorage.setItem('accountEmail', addr.email)
+
+      // (Optionnel) vider le brouillon après lancement du paiement
+      // localStorage.removeItem(STORAGE_KEY)
+
+      window.location.href = data.checkoutUrl
+    } catch (e: any) {
+      setErr(e?.message || 'SERVER_ERROR')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // Tant qu’on n’a pas fini de lire le localStorage, on évite un flash
+  if (!ready) {
+    return (
+      <section className="container py-12">
+        <div className="card p-6">Chargement…</div>
+      </section>
+    )
+  }
+
+  // Si hasDraft = false, on a déjà lancé la redirection; on peut afficher un fallback court
+  if (!hasDraft) {
+    return (
+      <section className="container py-12">
+        <div className="card p-6">
+          <div className="text-lg font-semibold mb-1">Redirection…</div>
+          <p className="text-muted">Aucune carte détectée dans votre brouillon.</p>
+          <div className="mt-4">
+            <Link to="/order/new" className="btn-primary">← Retour aux cartes</Link>
+          </div>
+        </div>
+      </section>
+    )
+  }
 
   return (
-    <section className="mt-8">
-      {/* Header + résumé */}
-      <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-2">
-        <div className="text-sm">
-          <div className="font-medium">Réductions permanentes selon votre palier</div>
-          <div className="text-muted">Cumulées automatiquement sur chaque commande.</div>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="text-sm text-muted">Palier actuel :</span>
-          <span className="inline-flex items-center gap-2 rounded-full border border-border bg-white dark:bg-slate-900 px-3 py-1 shadow-sm">
-            <span className={`inline-block w-2.5 h-2.5 rounded-full ${current.dot}`} />
-            <span className="font-medium">{current.label}</span>
-            <span className="text-muted text-xs">({current.discount}% off)</span>
-          </span>
-        </div>
+    <section className="container py-12 md:pb-12 pb-24">
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl md:3xl font-bold">Adresse de retour</h1>
+        <Link to="/order/new" className="btn-outline">← Modifier mes cartes</Link>
       </div>
 
-      {/* Progression vers le prochain palier */}
-      <div className="mt-4 rounded-xl border border-border p-4 bg-white/60 dark:bg-slate-900/40">
-        <div className="flex items-center justify-between text-sm">
-          <span>
-            {next ? (
-              <>Il vous reste <span className="font-semibold">{remaining}€</span> pour atteindre <span className="font-semibold">{next.label}</span> ({next.discount}%).</>
-            ) : (
-              <>Vous êtes au palier <span className="font-semibold">max</span> 🎉</>
-            )}
-          </span>
-          <span className="text-muted">Total dépensé : {spend}€</span>
-        </div>
-        <div className="mt-2 h-3 rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden">
-          <div
-            className="h-full bg-indigo-500 transition-[width]"
-            style={{ width: `${next ? Math.round(progress * 100) : 100}%` }}
-          />
-        </div>
-        <div className="mt-1 flex justify-between text-xs text-muted">
-          <span>≥ {rangeMin}€</span>
-          <span>{next ? `Prochain palier: ${next.min}€` : '—'}</span>
-        </div>
-      </div>
-
-      {/* Cartes de paliers */}
-      <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
-        {TIERS.map((t, i) => {
-          const active = i === current.idx
-          return (
-            <div
-              key={t.key}
-              className={[
-                'relative rounded-2xl border p-4 bg-white dark:bg-slate-900',
-                'border-border shadow-sm',
-                active ? 'ring-2 ring-indigo-500 shadow-[0_0_0_6px_rgba(99,102,241,.08)]' : 'hover:shadow-md transition-shadow'
-              ].join(' ')}
-            >
-              {active && (
-                <span className="absolute -top-2 right-3 text-[10px] px-2 py-0.5 rounded-full bg-indigo-600 text-white shadow">
-                  Vous
-                </span>
-              )}
-
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <span className={`inline-block w-2.5 h-2.5 rounded-full ${t.dot}`} />
-                  <div className="font-medium">{t.label}</div>
-                </div>
-                <div className="text-right">
-                  <div className="text-xs text-muted">Remise</div>
-                  <div className="text-lg font-semibold">-{t.discount}%</div>
-                </div>
-              </div>
-
-              <div className="mt-3 flex items-center justify-between text-sm">
-                <div className="text-muted">Seuil</div>
-                <div className="font-medium">≥ {t.min}€</div>
-              </div>
-
-              <div className="mt-3 h-1.5 rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden">
-                <div
-                  className={`h-full ${i < current.idx ? 'bg-indigo-400' : i === current.idx ? 'bg-indigo-600' : 'bg-slate-400/40'}`}
-                  style={{ width: '100%' }}
-                />
-              </div>
+      <div className="mt-6 grid md:grid-cols-3 gap-6">
+        {/* Form */}
+        <div className="md:col-span-2 card p-6">
+          <div className="grid sm:grid-cols-2 gap-4">
+            <div>
+              <label className="text-sm text-muted">Email</label>
+              <input
+                type="email"
+                value={addr.email}
+                onChange={e => update('email', e.target.value)}
+                placeholder="vous@exemple.com"
+                className="mt-1 w-full rounded-lg border border-border bg-white dark:bg-slate-900 px-4 py-2"
+              />
             </div>
-          )
-        })}
+            <div />
+            <div>
+              <label className="text-sm text-muted">Prénom</label>
+              <input
+                value={addr.firstName}
+                onChange={e => update('firstName', e.target.value)}
+                placeholder="Prénom"
+                className="mt-1 w-full rounded-lg border border-border bg-white dark:bg-slate-900 px-4 py-2"
+              />
+            </div>
+            <div>
+              <label className="text-sm text-muted">Nom</label>
+              <input
+                value={addr.lastName}
+                onChange={e => update('lastName', e.target.value)}
+                placeholder="Nom"
+                className="mt-1 w-full rounded-lg border border-border bg-white dark:bg-slate-900 px-4 py-2"
+              />
+            </div>
+            <div className="sm:col-span-2">
+              <label className="text-sm text-muted">Société (optionnel)</label>
+              <input
+                value={addr.company}
+                onChange={e => update('company', e.target.value)}
+                placeholder="Nom de société"
+                className="mt-1 w-full rounded-lg border border-border bg-white dark:bg-slate-900 px-4 py-2"
+              />
+            </div>
+
+            <div className="sm:col-span-2">
+              <label className="text-sm text-muted">Adresse</label>
+              <input
+                value={addr.line1}
+                onChange={e => update('line1', e.target.value)}
+                placeholder="N° et rue"
+                className="mt-1 w-full rounded-lg border border-border bg-white dark:bg-slate-900 px-4 py-2"
+              />
+            </div>
+            <div className="sm:col-span-2">
+              <label className="text-sm text-muted">Complément (optionnel)</label>
+              <input
+                value={addr.line2}
+                onChange={e => update('line2', e.target.value)}
+                placeholder="Bâtiment, app., etc."
+                className="mt-1 w-full rounded-lg border border-border bg-white dark:bg-slate-900 px-4 py-2"
+              />
+            </div>
+
+            <div>
+              <label className="text-sm text-muted">Code postal</label>
+              <input
+                value={addr.postalCode}
+                onChange={e => update('postalCode', e.target.value)}
+                placeholder="75000"
+                className="mt-1 w-full rounded-lg border border-border bg-white dark:bg-slate-900 px-4 py-2"
+              />
+            </div>
+            <div>
+              <label className="text-sm text-muted">Ville</label>
+              <input
+                value={addr.city}
+                onChange={e => update('city', e.target.value)}
+                placeholder="Paris"
+                className="mt-1 w-full rounded-lg border border-border bg-white dark:bg-slate-900 px-4 py-2"
+              />
+            </div>
+            <div>
+              <label className="text-sm text-muted">Pays</label>
+              <input
+                value={addr.country}
+                onChange={e => update('country', e.target.value)}
+                placeholder="FR"
+                className="mt-1 w-full rounded-lg border border-border bg-white dark:bg-slate-900 px-4 py-2"
+              />
+            </div>
+            <div>
+              <label className="text-sm text-muted">Téléphone (optionnel)</label>
+              <input
+                value={addr.phone}
+                onChange={e => update('phone', e.target.value)}
+                placeholder="+33…"
+                className="mt-1 w-full rounded-lg border border-border bg-white dark:bg-slate-900 px-4 py-2"
+              />
+            </div>
+
+            <div className="sm:col-span-2">
+              <label className="text-sm text-muted">Instructions (optionnel)</label>
+              <textarea
+                value={addr.instructions}
+                onChange={e => update('instructions', e.target.value)}
+                rows={3}
+                placeholder="Infos de livraison utiles"
+                className="mt-1 w-full rounded-lg border border-border bg-white dark:bg-slate-900 px-4 py-2"
+              />
+            </div>
+          </div>
+
+          {err && <div className="mt-4 text-sm text-red-600 dark:text-red-400">{err}</div>}
+
+          <button type="button" className="btn-primary mt-6" onClick={submit} disabled={loading}>
+            {loading ? 'Redirection…' : 'Passer au paiement'}
+          </button>
+        </div>
+
+        {/* Récap sticky */}
+        <aside className="card p-6 h-max md:sticky md:top-24">
+          <div className="font-semibold">Récapitulatif</div>
+          <div className="mt-3 text-sm space-y-2">
+            <div className="flex justify-between"><span>Cartes</span><span>{draft?.cards?.length || 0}</span></div>
+            <div className="flex justify-between"><span>Formule</span><span>{draft?.plan}</span></div>
+            {draft?.appliedCoupon && (
+              <div className="flex justify-between text-muted">
+                <span>Code promo</span><span>{draft.appliedCoupon}</span>
+              </div>
+            )}
+            <div className="border-t border-border/70 my-2" />
+            <div className="flex justify-between font-semibold">
+              <span>Total estimé</span><span>{total.toFixed(2)}€</span>
+            </div>
+          </div>
+        </aside>
+      </div>
+
+      {/* Bottom bar mobile */}
+      <div className="md:hidden fixed bottom-0 inset-x-0 z-40 border-t border-border/70 bg-surface/95 dark:bg-slate-950/90 backdrop-blur px-4 py-3">
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="text-xs text-muted">Total estimé</div>
+            <div className="text-lg font-semibold">{total.toFixed(2)}€</div>
+          </div>
+          <button className="btn-primary" onClick={submit} disabled={loading}>
+            {loading ? '...' : 'Payer'}
+          </button>
+        </div>
       </div>
     </section>
   )

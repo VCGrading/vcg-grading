@@ -23,38 +23,40 @@ export default async function handler(req, res) {
   const envOk = {
     SUPABASE_URL: !!process.env.SUPABASE_URL,
     SUPABASE_SERVICE_ROLE: !!process.env.SUPABASE_SERVICE_ROLE,
-    STRIPE_SECRET_KEY: !!process.env.STRIPE_SECRET_KEY,
+    STRIPE_SECRET_KEY: !!process.env.STRIPE_SECRET_KEY, // optionnel
   }
   if (!envOk.SUPABASE_URL || !envOk.SUPABASE_SERVICE_ROLE) {
     return fail(501, 'SUPABASE_NOT_CONFIGURED', { envOk })
   }
 
+  // Parse body robuste
   let body = req.body
   if (typeof body === 'string') { try { body = JSON.parse(body) } catch { body = {} } }
   body = body || {}
   const { email, plan, cards, promoCode, address } = body
+
+  // Garde-fous serveur
   if (!email || !plan || !Array.isArray(cards) || cards.length === 0) {
     return fail(400, 'Bad payload', { debug: { hasEmail: !!email, plan, cardsLen: Array.isArray(cards) ? cards.length : null } })
   }
 
+  // Prix de base
   const base = { Standard: 1199, Express: 2999, Ultra: 8999 }
   if (!base[plan]) return fail(400, 'Unknown plan', { plan })
-  const subtotal = base[plan] * cards.length // en centimes
+  const subtotal = base[plan] * cards.length // centimes
 
-  // 🔎 cumul réel utilisateur pour appliquer le bon palier
+  // Cumul payé réel (on exclut les commandes en attente paiement)
   let userSpendEuros = 0
   try {
     const { data: prev, error: sumErr } = await supaService
       .from('orders')
-      .select('total_cents, status')
+      .select('total_cents,status')
       .eq('user_email', email)
+      .neq('status', 'en attente paiement')
 
     if (sumErr) throw sumErr
     userSpendEuros = Math.max(0, (prev || []).reduce((s, o) => s + (o.total_cents || 0), 0) / 100)
-  } catch (e) {
-    // en cas d’erreur de lecture, on applique 0% (palier bois)
-    userSpendEuros = 0
-  }
+  } catch { userSpendEuros = 0 }
 
   const tierPct = discountForSpend(userSpendEuros)
   const PROMOS = { WELCOME10: 10, VCG5: 5 }
@@ -65,19 +67,20 @@ export default async function handler(req, res) {
   const total_cents = Math.max(0, subtotal - tierDiscountCents - couponDiscountCents)
 
   const orderId = `ORD-${Math.floor(1000 + Math.random() * 9000)}`
+
   try {
-    // 1) upsert user
+    // 1) upsert user par email
     const { error: userErr } = await supaService
       .from('users')
       .upsert({ email }, { onConflict: 'email' })
     if (userErr) return fail(500, 'DB_UPSERT_USER', { details: userErr.message })
 
-    // 2) insert order
+    // 2) insert order en "en attente paiement"
     const { error: orderErr } = await supaService.from('orders').insert({
       id: orderId,
       user_email: email,
       plan,
-      status: 'créée',
+      status: 'en attente paiement', // 👈 n’apparaît pas dans l’historique
       items: cards.length,
       total_cents,
       promo_code: promoCode || null,
@@ -99,10 +102,12 @@ export default async function handler(req, res) {
     const { error: itemsErr } = await supaService.from('order_items').insert(rows)
     if (itemsErr) return fail(500, 'DB_INSERT_ITEMS', { details: itemsErr.message })
 
+    // 4) Stripe (mock si pas de clé)
     const site = process.env.SITE_URL || `https://${req.headers.host}`
     const secret = process.env.STRIPE_SECRET_KEY
 
     if (!secret) {
+      // La commande reste "en attente paiement" → n'est pas listée
       const checkoutUrl = `${site}/account?order=${orderId}&mock=1`
       return res.status(200).json({ checkoutUrl, orderId, mode: 'mock' })
     }
