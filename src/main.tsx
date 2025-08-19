@@ -14,6 +14,7 @@ import NotFound from './pages/NotFound'
 import { I18nProvider } from './i18n'
 import Login from './pages/Login'
 import { AuthProvider } from './auth/AuthProvider'
+import AuthCallback from './pages/AuthCallback' // <-- ajouté
 
 const router = createBrowserRouter([
   {
@@ -22,6 +23,7 @@ const router = createBrowserRouter([
     children: [
       { index: true, element: <Landing /> },
       { path: 'login', element: <Login /> },
+      { path: 'auth/callback', element: <AuthCallback /> }, // <-- ajouté
       { path: 'verify', element: <Verify /> },
       { path: 'verify/:certId', element: <Verify /> },
       { path: 'cert/:certId', element: <CertificatePage /> },
