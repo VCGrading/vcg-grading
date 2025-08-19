@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useLocation, useParams } from 'react-router-dom'
 
 type Order = {
   id: string
@@ -32,18 +32,29 @@ const STEPS: { key: Order['status']; label: string }[] = [
 ]
 
 export default function OrderDetails() {
-  const { id } = useParams<{ id: string }>()
-  const [loading, setLoading] = useState(true)
+  const { id: idFromParams } = useParams<{ id: string }>()
+  const { search } = useLocation()
+  const idFromQuery = new URLSearchParams(search).get('order') || undefined
+  const orderId = (idFromParams || idFromQuery || '').trim()
+
+  const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [order, setOrder] = useState<Order | null>(null)
   const [items, setItems] = useState<Item[]>([])
 
   useEffect(() => {
     let alive = true
+
     async function run() {
-      setLoading(true); setError(null)
+      if (!orderId) { // pas d’ID → pas de fetch, on affiche l’erreur
+        setError('Identifiant de commande manquant.')
+        setLoading(false)
+        return
+      }
+      setLoading(true)
+      setError(null)
       try {
-        const r = await fetch(`/api/order?id=${encodeURIComponent(id || '')}`)
+        const r = await fetch(`/api/order?id=${encodeURIComponent(orderId)}`)
         const raw = await r.text()
         const data = raw ? JSON.parse(raw) : null
         if (!r.ok) throw new Error(data?.error || raw || `HTTP ${r.status}`)
@@ -51,14 +62,16 @@ export default function OrderDetails() {
         setOrder(data.order)
         setItems(data.items || [])
       } catch (e: any) {
+        if (!alive) return
         setError(e?.message || 'Commande introuvable')
       } finally {
-        setLoading(false)
+        if (alive) setLoading(false)
       }
     }
-    if (id) run()
+
+    run()
     return () => { alive = false }
-  }, [id])
+  }, [orderId])
 
   const stepIndex = useMemo(() => {
     const idx = STEPS.findIndex(s => s.key === order?.status)
@@ -68,7 +81,7 @@ export default function OrderDetails() {
   if (loading) {
     return (
       <section className="container py-12">
-        <div className="animate-pulse card p-6">Chargement…</div>
+        <div className="card p-6">Chargement…</div>
       </section>
     )
   }
