@@ -249,6 +249,8 @@ const fr = {
   'landing.final.desc': 'Lancez une commande en quelques clics et suivez-la en temps réel.',
   'landing.final.primary': 'Démarrer',
   'landing.final.secondary': 'Créer un compte',
+  
+  'account.empty':'Aucune commande.',
 }
 
 export default fr

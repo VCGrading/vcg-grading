@@ -21,6 +21,7 @@ export default function Account() {
   const { user, session, loading } = useAuth()
   const navigate = useNavigate()
 
+  // Si non connecté → login
   useEffect(() => {
     if (!loading && !user) navigate('/login?next=/account', { replace: true })
   }, [loading, user, navigate])
@@ -28,32 +29,65 @@ export default function Account() {
   const [orders, setOrders] = useState<OrderRow[]>([])
   const [fetching, setFetching] = useState(false)
 
+  // Total cumulé en €
   const totalSpend = useMemo(
     () => Math.max(0, orders.reduce((s, o) => s + (o.total_cents || 0), 0) / 100),
     [orders]
   )
   const tier = tierForSpend(totalSpend)
 
+  // Chargement des commandes (Bearer → fallback ?email=)
   useEffect(() => {
-    if (!session) return
+    if (!user) return
     setFetching(true)
-    fetch('/api/orders', {
-      headers: { Authorization: `Bearer ${session.access_token}` }
-    })
-      .then(async r => {
+    const controller = new AbortController()
+
+    async function load() {
+      try {
+        // 1) Essai avec Bearer
+        let r = await fetch('/api/orders', {
+          headers: session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {},
+          signal: controller.signal
+        })
+
+        // 2) Fallback si 401: passer l'email en query
+        if (r.status === 401 && user.email) {
+          r = await fetch(`/api/orders?email=${encodeURIComponent(user.email)}`, { signal: controller.signal })
+        }
+
         const raw = await r.text()
         const data = raw ? JSON.parse(raw) : null
         if (!r.ok) throw new Error(data?.error || raw || `HTTP ${r.status}`)
+
         const list: OrderRow[] = (data?.orders || []).map((o: any) => ({
-          id: o.id, status: o.status, items: o.items, total_cents: o.total_cents, created_at: o.created_at, plan: o.plan, tracking: o.tracking ?? null
+          id: o.id,
+          status: o.status,
+          items: o.items,
+          total_cents: o.total_cents,
+          created_at: o.created_at,
+          plan: o.plan,
+          tracking: o.tracking ?? null
         }))
         setOrders(list)
-      })
-      .catch(() => {})
-      .finally(() => setFetching(false))
-  }, [session])
+      } catch (e) {
+        console.error('orders fetch error', e)
+        setOrders([]) // permet d'afficher l'état vide proprement
+      } finally {
+        setFetching(false)
+      }
+    }
+
+    load()
+    return () => controller.abort()
+  }, [user, session])
 
   if (loading || !user) return null
+
+  // Message i18n sûr pour l'état vide
+  const emptyMsg = (() => {
+    const k = t('account.empty')
+    return k === 'account.empty' ? 'Aucune commande pour cet email.' : k
+  })()
 
   return (
     <section className="container py-12">
@@ -63,6 +97,7 @@ export default function Account() {
       <TiersShowcase spend={totalSpend} />
 
       <div className="mt-6 grid md:grid-cols-3 gap-6">
+        {/* Carte utilisateur */}
         <div className="md:col-span-1 card p-6">
           <div className="font-semibold">{user.email?.split('@')[0]}</div>
           <div className="text-sm text-muted">{user.email}</div>
@@ -76,6 +111,7 @@ export default function Account() {
           {fetching && <div className="mt-3 text-xs text-muted">Mise à jour…</div>}
         </div>
 
+        {/* Tableau des commandes */}
         <div className="md:col-span-2 card p-0 overflow-hidden">
           <table className="w-full text-sm">
             <thead className="text-left bg-slate-50 dark:bg-slate-900">
@@ -93,7 +129,7 @@ export default function Account() {
                   <td className="px-4 py-3 font-mono">{o.id}</td>
                   <td className="px-4 py-3">{o.status}</td>
                   <td className="px-4 py-3">{o.items}</td>
-                  <td className="px-4 py-3">{(o.total_cents/100).toFixed(2)}€</td>
+                  <td className="px-4 py-3">{(o.total_cents / 100).toFixed(2)}€</td>
                   <td className="px-4 py-3 text-right">
                     <Link to={`/orders/${o.id}?order=${o.id}`} className="btn-outline">
                       {t('account.table.details')}
@@ -101,10 +137,11 @@ export default function Account() {
                   </td>
                 </tr>
               ))}
+
               {orders.length === 0 && !fetching && (
                 <tr className="border-t border-border/70">
                   <td className="px-4 py-6 text-muted" colSpan={5}>
-                    {t('account.empty') || 'Aucune commande pour cet email.'}
+                    {emptyMsg}
                   </td>
                 </tr>
               )}

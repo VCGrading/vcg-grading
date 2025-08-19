@@ -249,6 +249,7 @@ const en = {
   'landing.final.desc': 'Start an order in a few clicks and track it in real time.',
   'landing.final.primary': 'Get started',
   'landing.final.secondary': 'Create account',
+  'account.empty':'No orders.',
 }
 
 
